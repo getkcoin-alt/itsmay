@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "llama-3.3-70b-versatile"
+    # Max passes through the agentic tool loop per turn (tool call → result →
+    # re-ask). Caps how many times Scrappy can chain tools/experts in one reply.
+    tool_loop_max_iters: int = 4
 
     # ── Embeddings ────────────────────────────────────────────────
     # Default: local fastembed (ONNX, ~120MB, no API key, no rate limit).
@@ -60,6 +63,11 @@ class Settings(BaseSettings):
     user_handle: str = "karnveer"
     mission_target_date: date = date(2026, 11, 23)
     mission_statement: str = "Achieve financial freedom"
+
+    # ── Gmail connector ───────────────────────────────────────────
+    # JSON blob from scripts/gmail_auth.py. If unset, the Gmail connector
+    # and Email expert are silently absent from the toolbox.
+    google_credentials_json: str = ""
 
     # ── Mac agent ─────────────────────────────────────────────────
     vault_api_base: str = "http://127.0.0.1:8000"

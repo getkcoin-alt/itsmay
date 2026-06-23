@@ -41,7 +41,8 @@ vault-zeta/
 │   ├── api/                 FastAPI app + middleware + routers
 │   │   ├── main.py
 │   │   ├── middleware/auth.py
-│   │   └── routers/{chat,voice}.py
+│   │   ├── routers/{chat,voice,console}.py
+│   │   └── static/          web console SPA (index.html, app.js, styles.css)
 │   └── mac_agent/           push-to-talk Mac client (not shipped to Railway)
 ├── core/
 │   ├── brain/llm.py         multi-provider LLM client
@@ -167,14 +168,74 @@ Every turn:
 5. Compose: system persona → self-context → retrieved memories → recent → new turn.
 6. Stream the reply, persist with embedding on completion.
 
-`memories` is empty until you wire the consolidator. Drop facts/reflections in directly to test retrieval.
+The **Memory Keeper** expert now writes durable facts to `memories` via the
+`memory.save` tool (and recalls them with `memory.search`), so the store fills as
+you talk. Nightly auto-consolidation (critic/learner) is still future work; you
+can also drop facts/reflections in directly to test retrieval.
 
 ---
+
+## Web console
+
+Browsing the deployment's root URL (`/`) serves a self-contained management
+console — a vanilla SPA (no build step) served straight from FastAPI out of
+`apps/api/static/`. It talks to the same API over the same origin, so there's
+no CORS and no separate deploy. Four tabs:
+
+- **Chat** — stream a conversation with Scrappy. Tool calls and expert
+  delegations show up inline as chips so you can see what he did to answer.
+  (Uses `fetch` + `ReadableStream` to read the SSE stream, since the browser's
+  `EventSource` can't send the bearer header.)
+- **Memory** — browse, semantically search, hand-add, and delete entries in the
+  pgvector store (`/v1/console/memory`).
+- **System** — which connectors are installed and which experts are live
+  (with health), straight from `/v1/console/status`.
+- **Guide** — a short "how to use Scrappy" primer.
+
+Auth: the page shell (`/`, `/static/*`, `/status`) loads without a token so it
+can prompt for the key; every `/v1` data call carries
+`Authorization: Bearer <VAULT_API_KEY>`. The key is held in the browser's
+localStorage (gear icon, top-right). In open mode (empty `VAULT_API_KEY`) no key
+is needed.
+
+## Agent architecture: orchestrator + experts
+
+Scrappy is an *orchestrator*. Each turn runs a multi-turn tool loop
+(`core/brain/agent_loop.py`): the model can call a tool, see the result, and keep
+going until it answers without calling one. Capped by `TOOL_LOOP_MAX_ITERS`.
+
+Two kinds of tools sit behind one merged toolbox (`core/brain/orchestrator.py`):
+
+- **Connectors** (`core/connectors/<name>/connector.py`) — raw capabilities.
+  Tools marked `executor="server"` run in-process (e.g. `memory.*`) and their
+  results are fed back to the model; `client_mac` tools are forwarded to the Mac
+  over SSE (fire-and-forget) and only offered on voice channels.
+- **Experts** (`core/agents/experts.py`) — specialist sub-agents Scrappy
+  delegates to via auto-generated `ask_<name>` tools. An expert has its own
+  persona, its own slice of connectors, and its own internal tool loop, and
+  hands back a synthesized answer. Current roster: **Memory Keeper** (owns
+  long-term memory via the `memory` connector) and **Strategist** (pure
+  reasoning, no tools).
+
+An expert is only offered once every connector it depends on is installed, so
+the roster self-assembles. Server tools and experts work on every channel; Mac
+control is added only on voice.
+
+### Add an expert
+1. If it needs tools, add a connector under `core/connectors/<ns>/connector.py`.
+2. Add a `SubAgentSpec` to `core/agents/experts.py` with its `tool_namespaces`.
+
+That's it — `ask_<name>` appears in Scrappy's toolbox automatically.
 
 ## What's next (per the architecture)
 
 1. ✓ Voice loop (Whisper + ElevenLabs) on the Mac agent
 2. ✓ Cloud deployment (Railway + Groq + OpenAI)
-3. Connector framework + first connector (Gmail)
-4. Goals/tasks + planner/executor agent
-5. Critic + Learner + nightly memory consolidation
+3. ✓ Connector framework + Mac control connector
+4. ✓ Multi-turn agentic tool loop + sub-agent (expert) framework
+5. ✓ Long-term memory tools (Memory Keeper expert)
+6. ✓ Gmail connector → Email expert
+7. ✓ Web console (chat + memory browser + system status + guide)
+8. Calendar connector → calendar expert
+9. Goals/tasks + planner/executor expert
+10. Critic + Learner + nightly memory consolidation

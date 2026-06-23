@@ -26,10 +26,14 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         *,
         token: str,
         allow_paths: Iterable[str] = (),
+        allow_prefixes: Iterable[str] = (),
     ) -> None:
         super().__init__(app)
         self._token = token or ""
         self._allow_paths = tuple(allow_paths)
+        # Prefix matches for things like the static UI bundle (/static/...),
+        # which must load before the user has supplied the API key.
+        self._allow_prefixes = tuple(allow_prefixes)
 
     async def dispatch(self, request: Request, call_next):
         if not self._token:
@@ -37,7 +41,11 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if path in self._allow_paths or request.method == "OPTIONS":
+        if (
+            path in self._allow_paths
+            or path.startswith(self._allow_prefixes)
+            or request.method == "OPTIONS"
+        ):
             return await call_next(request)
 
         auth = request.headers.get("authorization", "")

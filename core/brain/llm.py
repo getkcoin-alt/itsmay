@@ -119,9 +119,46 @@ Provider = Literal["openai", "ollama"]
 class Message:
     role: Role
     content: str
+    # Assistant turns that called tools carry the wire-format tool_calls list.
+    tool_calls: list[dict] | None = None
+    # Tool-result turns (role="tool") carry the id + name they answer.
+    tool_call_id: str | None = None
+    name: str | None = None
 
     def to_dict(self) -> dict:
-        return {"role": self.role, "content": self.content}
+        d: dict = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            d["tool_calls"] = self.tool_calls
+        if self.role == "tool":
+            d["tool_call_id"] = self.tool_call_id
+            d["name"] = self.name
+        return d
+
+
+def assistant_tool_call_message(tool_calls: list[dict], content: str = "") -> Message:
+    """Build the assistant turn that requested tools, in OpenAI wire format.
+
+    `tool_calls` items are the parsed `{id, name, arguments: dict}` shape the
+    client produces; `arguments` is re-serialized to the JSON string the API
+    expects on the way back in.
+    """
+    wire: list[dict] = []
+    for tc in tool_calls:
+        args = tc.get("arguments", {})
+        args_str = args if isinstance(args, str) else json.dumps(args)
+        wire.append(
+            {
+                "id": tc.get("id") or "",
+                "type": "function",
+                "function": {"name": tc.get("name") or "", "arguments": args_str},
+            }
+        )
+    return Message(role="assistant", content=content, tool_calls=wire)
+
+
+def tool_result_message(call_id: str, name: str, content: str) -> Message:
+    """Build a tool-result turn the model reads after a tool runs."""
+    return Message(role="tool", content=content, tool_call_id=call_id, name=name)
 
 
 @dataclass(slots=True)

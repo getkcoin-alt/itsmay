@@ -49,11 +49,23 @@ class ConnectorManifest(BaseModel):
 
 @dataclass(slots=True)
 class InvocationContext:
-    """Passed to `Connector.invoke()` for server-executed tools."""
+    """Passed to `Connector.invoke()` for server-executed tools.
+
+    Beyond identity, it carries handles to the long-lived services a server tool
+    (or a delegated sub-agent) may need: the LLM client, the connector registry,
+    the embedder, and the semantic store. They're typed `Any` to keep this base
+    module free of heavy imports / circular dependencies — callers populate them.
+    """
 
     user_id: str | None = None
     session_id: str | None = None
     voice_mode: bool = False
+    # Live service handles (populated by the chat router per request).
+    user_uuid: Any | None = None  # UUID of the user row
+    llm: Any | None = None  # core.brain.llm.LLMClient
+    registry: Any | None = None  # core.connectors.registry.Registry
+    embedder: Any | None = None  # core.memory.embedder.Embedder
+    semantic: Any | None = None  # core.memory.semantic.SemanticStore
 
 
 class Connector(ABC):

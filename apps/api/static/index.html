@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Vault Zeta · Scrappy</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <!-- ── Top bar ─────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">⚡</span>
+      <div class="brand-text">
+        <strong>Scrappy Singh</strong>
+        <span class="brand-sub">Vault Zeta Node SSN-92C</span>
+      </div>
+    </div>
+
+    <div id="mission" class="mission" hidden>
+      <div class="mission-item">
+        <span class="label">Mission</span>
+        <span id="mission-text" class="value">—</span>
+      </div>
+      <div class="mission-item">
+        <span class="label">Countdown</span>
+        <span id="mission-days" class="value accent">—</span>
+      </div>
+      <div class="mission-item">
+        <span class="label">Model</span>
+        <span id="mission-model" class="value mono">—</span>
+      </div>
+    </div>
+
+    <div class="conn">
+      <span id="conn-dot" class="dot dot-idle" title="connection"></span>
+      <button id="settings-btn" class="icon-btn" title="API key / settings">⚙</button>
+    </div>
+  </header>
+
+  <!-- ── Tabs ────────────────────────────────────────────────── -->
+  <nav class="tabs">
+    <button class="tab active" data-tab="chat">Chat</button>
+    <button class="tab" data-tab="memory">Memory</button>
+    <button class="tab" data-tab="system">System</button>
+    <button class="tab" data-tab="guide">Guide</button>
+  </nav>
+
+  <main>
+    <!-- ── Chat ──────────────────────────────────────────────── -->
+    <section id="panel-chat" class="panel active">
+      <div id="chat-log" class="chat-log">
+        <div class="empty-hint">
+          Talk to Scrappy. He'll delegate to experts and use tools as needed —
+          you'll see those steps inline.
+        </div>
+      </div>
+      <form id="chat-form" class="chat-form">
+        <textarea id="chat-input" rows="1" placeholder="Message Scrappy…  (Enter to send, Shift+Enter for newline)"></textarea>
+        <button type="submit" id="chat-send">Send</button>
+        <button type="button" id="chat-new" class="ghost" title="Start a fresh session">New</button>
+      </form>
+    </section>
+
+    <!-- ── Memory ────────────────────────────────────────────── -->
+    <section id="panel-memory" class="panel">
+      <div class="mem-toolbar">
+        <form id="mem-search-form" class="mem-search">
+          <input id="mem-search-input" type="text" placeholder="Search memory by meaning…" />
+          <button type="submit">Search</button>
+          <button type="button" id="mem-refresh" class="ghost">Recent</button>
+        </form>
+        <button type="button" id="mem-add-toggle" class="ghost">+ Add memory</button>
+      </div>
+
+      <form id="mem-add-form" class="mem-add" hidden>
+        <textarea id="mem-add-content" rows="2" placeholder="A durable, self-contained fact to remember…"></textarea>
+        <div class="mem-add-row">
+          <label>Kind
+            <select id="mem-add-kind">
+              <option value="factual">factual</option>
+              <option value="semantic">semantic</option>
+              <option value="procedural">procedural</option>
+              <option value="reflection">reflection</option>
+              <option value="episodic">episodic</option>
+            </select>
+          </label>
+          <label>Importance
+            <input id="mem-add-importance" type="range" min="0" max="1" step="0.05" value="0.6" />
+            <span id="mem-add-importance-val" class="mono">0.60</span>
+          </label>
+          <button type="submit">Save</button>
+        </div>
+      </form>
+
+      <div id="mem-meta" class="mem-meta"></div>
+      <div id="mem-list" class="mem-list"></div>
+    </section>
+
+    <!-- ── System ────────────────────────────────────────────── -->
+    <section id="panel-system" class="panel">
+      <div class="sys-grid">
+        <div class="card">
+          <h3>Health</h3>
+          <div id="sys-health" class="kv">—</div>
+        </div>
+        <div class="card">
+          <h3>Experts</h3>
+          <div id="sys-experts" class="stack">—</div>
+        </div>
+        <div class="card wide">
+          <h3>Connectors</h3>
+          <div id="sys-connectors" class="stack">—</div>
+        </div>
+      </div>
+      <button id="sys-refresh" class="ghost">Refresh</button>
+    </section>
+
+    <!-- ── Guide ─────────────────────────────────────────────── -->
+    <section id="panel-guide" class="panel guide">
+      <h2>How to use Scrappy</h2>
+      <p>
+        Scrappy is an <strong>orchestrator</strong>. You talk to him in plain
+        language; under the hood he runs a multi-turn loop where he can call
+        tools, hand work to specialist <em>experts</em>, read the result, and
+        keep going until he can answer. You don't manage any of that — you just
+        ask.
+      </p>
+
+      <h3>The crew (experts)</h3>
+      <ul>
+        <li><strong>Memory Keeper</strong> — remembers durable facts and recalls
+          them later. Say <em>"remember that I use Stripe for payouts"</em> or
+          <em>"what do you know about my payment setup?"</em></li>
+        <li><strong>Strategist</strong> — high-leverage business / architecture
+          calls. Say <em>"should I build the API or the UI first?"</em> — it ranks
+          and picks, no fence-sitting.</li>
+        <li><strong>Email</strong> — reads, summarises, drafts, and sends Gmail
+          (only when the Gmail connector is wired). It <em>drafts by default</em>
+          and only sends when you explicitly say "send it".</li>
+      </ul>
+      <p class="muted">
+        An expert only appears once the connectors it needs are installed — check
+        the <strong>System</strong> tab to see who's live right now.
+      </p>
+
+      <h3>Memory</h3>
+      <p>
+        Every conversation is embedded and stored; relevant bits are pulled back
+        automatically on future turns. The <strong>Memory</strong> tab lets you
+        browse what's stored, search it by meaning, hand-add a fact, or delete
+        something. Importance (0–1) biases what gets recalled — identity/goals
+        high, trivia low.
+      </p>
+
+      <h3>Voice vs. web</h3>
+      <p>
+        This console talks over the same brain as the Mac push-to-talk client.
+        Mac-control tools (open apps, notify, speak) only show up on the voice
+        channel — here you get chat, memory, and expert delegation.
+      </p>
+
+      <h3>Tips</h3>
+      <ul>
+        <li>Give context in one message — experts can't see the whole thread, so
+          Scrappy hands them a self-contained task.</li>
+        <li>Hit <strong>New</strong> in Chat to start a clean session.</li>
+        <li>Watching the inline <span class="chip chip-demo">→ tool</span> /
+          <span class="chip chip-demo">✓ result</span> chips tells you exactly
+          what Scrappy did to answer.</li>
+      </ul>
+    </section>
+  </main>
+
+  <!-- ── Settings / key modal ──────────────────────────────────── -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box">
+      <h3>API key</h3>
+      <p class="muted">
+        Stored only in this browser (localStorage). Sent as
+        <code>Authorization: Bearer …</code> on every request. Leave blank if the
+        server runs in open mode.
+      </p>
+      <input id="key-input" type="password" placeholder="VAULT_API_KEY" />
+      <div class="modal-actions">
+        <button id="key-save">Save</button>
+        <button id="key-clear" class="ghost">Clear</button>
+        <button id="key-close" class="ghost">Close</button>
+      </div>
+      <div id="key-status" class="muted"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

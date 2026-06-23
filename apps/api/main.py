@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from apps.api.middleware.auth import BearerAuthMiddleware
 from apps.api.routers import chat as chat_router
+from apps.api.routers import console as console_router
 from apps.api.routers import voice as voice_router
 from core.brain.llm import LLMClient
 from core.config import get_settings
@@ -56,18 +60,29 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Bearer-token guard. Leaves root + health open for liveness probes.
+    # Bearer-token guard. The console UI shell (/, /static, /status) stays open
+    # so the page can load and prompt for the key; every /v1 data endpoint
+    # except /v1/health stays protected.
     app.add_middleware(
         BearerAuthMiddleware,
         token=settings.vault_api_key,
-        allow_paths=("/", "/v1/health"),
+        allow_paths=("/", "/status", "/v1/health", "/favicon.ico"),
+        allow_prefixes=("/static/",),
     )
 
     app.include_router(chat_router.router)
     app.include_router(voice_router.router)
+    app.include_router(console_router.router)
 
-    @app.get("/", tags=["meta"])
-    async def root() -> dict:
+    static_dir = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def console() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
+
+    @app.get("/status", tags=["meta"])
+    async def status() -> dict:
         return {
             "name": "Vault Zeta Node SSN-92C",
             "agent": "Scrappy Singh",

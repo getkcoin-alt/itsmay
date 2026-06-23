@@ -9,6 +9,7 @@ completions and dispatches tool calls to the right connector.
 from __future__ import annotations
 
 import importlib
+import json
 import pkgutil
 from dataclasses import dataclass, field
 
@@ -16,6 +17,26 @@ from core.connectors.base import Connector, ConnectorManifest, InvocationContext
 from core.logging import get_logger
 
 log = get_logger(__name__)
+
+
+def flatten_result(res: object) -> str:
+    """Flatten a connector `invoke()` result ({ok, result|error}) into a string
+    the model can read as a tool result."""
+    if isinstance(res, dict):
+        if res.get("ok") is False:
+            return f"error: {res.get('error', 'unknown error')}"
+        if "result" in res:
+            inner = res["result"]
+            return inner if isinstance(inner, str) else _json(inner)
+        return _json(res)
+    return res if isinstance(res, str) else _json(res)
+
+
+def _json(obj: object) -> str:
+    try:
+        return json.dumps(obj, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(obj)
 
 
 @dataclass(slots=True)
@@ -45,10 +66,16 @@ class Registry:
     def manifests(self) -> list[ConnectorManifest]:
         return [c.manifest for c in self.connectors.values()]
 
-    def tools_openai(self) -> list[dict]:
-        """Return the OpenAI/Groq-compatible `tools=[...]` payload."""
+    def tools_openai(self, *, executors: set[str] | None = None) -> list[dict]:
+        """Return the OpenAI/Groq-compatible `tools=[...]` payload.
+
+        Pass `executors` (e.g. {"server"} or {"client_mac"}) to include only
+        tools that run on those executors. Default: every tool.
+        """
         out: list[dict] = []
         for rt in self._tools_by_qname.values():
+            if executors is not None and rt.spec.executor not in executors:
+                continue
             out.append(
                 {
                     "type": "function",
