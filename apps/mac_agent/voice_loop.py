@@ -226,23 +226,31 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
             return
         player.play(out)
 
-    async for evt, data in stream_chat(client, text, session_id):
-        if evt == "session":
-            new_session_id = json.loads(data)["session_id"]
-        elif evt == "token":
-            full_response.append(data)
-            print(data, end="", flush=True)
-            buf += data
-            while True:
-                phrase, buf = pop_phrase(buf)
-                if phrase is None:
-                    break
-                tts_tasks.append(asyncio.create_task(synth(phrase)))
-        elif evt == "done":
-            break
-        elif evt == "error":
-            print(f"\n[chat error] {data}", file=sys.stderr)
-            break
+    try:
+        async for evt, data in stream_chat(client, text, session_id):
+            if evt == "session":
+                new_session_id = json.loads(data)["session_id"]
+            elif evt == "token":
+                full_response.append(data)
+                print(data, end="", flush=True)
+                buf += data
+                while True:
+                    phrase, buf = pop_phrase(buf)
+                    if phrase is None:
+                        break
+                    tts_tasks.append(asyncio.create_task(synth(phrase)))
+            elif evt == "done":
+                break
+            elif evt == "error":
+                print(f"\n[chat error] {data}", file=sys.stderr)
+                break
+    except httpx.HTTPStatusError as e:
+        body = (e.response.text or "")[:300] if e.response is not None else ""
+        print(f"\n[chat http {e.response.status_code}] {body}", file=sys.stderr)
+        return new_session_id
+    except httpx.HTTPError as e:
+        print(f"\n[chat network error] {type(e).__name__}: {e}", file=sys.stderr)
+        return new_session_id
 
     if buf.strip():
         tts_tasks.append(asyncio.create_task(synth(buf.strip())))

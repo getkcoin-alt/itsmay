@@ -52,14 +52,16 @@ async def chat(
         # the client the new id so it can update its cache.
         session_id = await episodic.open_session(user_id, channel=body.channel)
 
-    # Embed the user turn once — used for storage AND retrieval.
+    # Embed the user turn (best-effort). If the embedder is down or rate-limited,
+    # we just lose semantic recall + vector persistence for this turn — the
+    # chat itself must not fail.
+    user_embedding = None
     try:
         user_embedding = await embedder.embed(body.message)
     except Exception as e:
-        log.exception("embed.failed", err=str(e))
-        raise HTTPException(503, "embedding service unavailable") from e
+        log.warning("embed.user_failed", err=str(e))
 
-    # Persist the user message.
+    # Persist the user message (embedding may be None — that's fine).
     await episodic.append_message(
         session_id, "user", body.message, embedding=user_embedding
     )
@@ -72,7 +74,11 @@ async def chat(
     recent_n = 6 if voice_mode else settings.recent_message_window
 
     recent = await episodic.recent_window(session_id, recent_n)
-    retrieved = await semantic.search(user_id, user_embedding, k=retrieval_k)
+    retrieved = (
+        await semantic.search(user_id, user_embedding, k=retrieval_k)
+        if user_embedding is not None
+        else []
+    )
     self_ctx = await render_self_context()
 
     # Drop the latest user message from recent (we add it back as the live turn).
