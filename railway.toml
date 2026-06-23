@@ -1,0 +1,14 @@
+# Railway deploy config. Linked from project root.
+# Postgres + Redis are provisioned as separate Railway plugins; their
+# DATABASE_URL and REDIS_URL are injected into this service automatically.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/v1/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+numReplicas = 1
