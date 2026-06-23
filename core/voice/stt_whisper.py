@@ -51,7 +51,9 @@ class WhisperSTT:
 
         self._local_model: Any | None = None
         self._load_lock = asyncio.Lock()
-        self._http = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
+        # Groq Whisper usually returns in <3s; cap at 45s so transient hangs
+        # fail-fast instead of being eaten by Railway's 300s edge timeout.
+        self._http = httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0))
 
     async def aclose(self) -> None:
         await self._http.aclose()

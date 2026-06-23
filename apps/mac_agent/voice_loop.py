@@ -83,16 +83,18 @@ def write_wav(audio: np.ndarray, path: Path) -> None:
 
 # ── HTTP: server ↔ agent ─────────────────────────────────────────
 async def transcribe(client: httpx.AsyncClient, wav_path: Path) -> str:
+    """POST audio to /v1/voice/transcribe. 45s timeout — Groq Whisper is
+    usually <3s; longer than that and we want to surface the hang."""
     with open(wav_path, "rb") as f:
         files = {"audio": ("mic.wav", f, "audio/wav")}
-        r = await client.post(f"{API_BASE}/v1/voice/transcribe", files=files, timeout=120)
+        r = await client.post(f"{API_BASE}/v1/voice/transcribe", files=files, timeout=45)
     r.raise_for_status()
     return r.json()["text"]
 
 
 async def stream_chat(client: httpx.AsyncClient, text: str, session_id: str | None):
     """Yields ('token'|'session'|'done'|'error', payload). Caller consumes deltas."""
-    body: dict = {"message": text}
+    body: dict = {"message": text, "channel": "voice_mac"}
     if session_id:
         body["session_id"] = session_id
     headers = {"Accept": "text/event-stream"}
@@ -184,6 +186,9 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
         write_wav(audio, wav_path)
         print("⌁ transcribing…", flush=True)
         text = await transcribe(client, wav_path)
+    except httpx.HTTPError as e:
+        print(f"\n[transcribe failed] {type(e).__name__}: {e}", file=sys.stderr)
+        return session_id
     finally:
         wav_path.unlink(missing_ok=True)
 

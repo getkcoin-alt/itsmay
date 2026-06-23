@@ -72,11 +72,13 @@ async def chat(
     # Drop the latest user message from recent (we add it back as the live turn).
     recent_for_prompt = [m for m in recent if not (m.role == "user" and m.content == body.message)]
 
+    voice_mode = "voice" in (body.channel or "").lower()
     messages = build_messages(
         self_context=self_ctx,
         retrieved_memories=[m.content for m in retrieved],
         recent_messages=recent_for_prompt,
         user_input=body.message,
+        voice_mode=voice_mode,
     )
 
     async def event_stream():
