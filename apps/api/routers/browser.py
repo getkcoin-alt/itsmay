@@ -2,10 +2,12 @@
 
 The Mac tab watcher POSTs here whenever a watched Chrome tab changes.
 This endpoint runs LLM analysis and returns a short summary that the
-Mac agent shows as a macOS notification.
+Mac agent shows as a macOS notification and the web console can display.
 """
 
 from __future__ import annotations
+
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -13,6 +15,10 @@ from pydantic import BaseModel, Field
 from core.brain.llm import LLMClient, Message
 
 router = APIRouter(prefix="/v1/browser", tags=["browser"])
+
+# In-memory ring-buffer of recent watch events — personal assistant, no DB needed.
+_recent_events: list[dict] = []
+_MAX_EVENTS = 50
 
 
 class TabEvent(BaseModel):
@@ -22,11 +28,29 @@ class TabEvent(BaseModel):
     diff: str = ""
 
 
+@router.get("/watch-status")
+async def watch_status() -> dict:
+    """Return the most recent tab-watch events for the web console."""
+    return {"events": list(reversed(_recent_events))}
+
+
 @router.post("/tab-event")
 async def tab_event(body: TabEvent, request: Request) -> dict:
     """Receive a tab-content change from the Mac watcher, return an AI summary."""
     llm: LLMClient = request.app.state.llm
     summary = await _summarize(llm, body)
+
+    _recent_events.append(
+        {
+            "title": body.title,
+            "url": body.url,
+            "summary": summary,
+            "received_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    if len(_recent_events) > _MAX_EVENTS:
+        _recent_events.pop(0)
+
     return {"summary": summary, "url": body.url, "title": body.title}
 
 
