@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from apps.api.middleware.auth import BearerAuthMiddleware
+from apps.api.routers import browser as browser_router
 from apps.api.routers import chat as chat_router
 from apps.api.routers import console as console_router
 from apps.api.routers import voice as voice_router
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router.router)
     app.include_router(voice_router.router)
     app.include_router(console_router.router)
+    app.include_router(browser_router.router)
 
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
