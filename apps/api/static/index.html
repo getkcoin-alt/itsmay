@@ -44,6 +44,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="chat">Chat</button>
     <button class="tab" data-tab="memory">Memory</button>
+    <button class="tab" data-tab="watch">Watch</button>
     <button class="tab" data-tab="system">System</button>
     <button class="tab" data-tab="guide">Guide</button>
   </nav>
@@ -92,11 +93,46 @@
             <span id="mem-add-importance-val" class="mono">0.60</span>
           </label>
           <button type="submit">Save</button>
+          <button type="button" id="mem-add-cancel" class="ghost">Cancel</button>
         </div>
       </form>
 
       <div id="mem-meta" class="mem-meta"></div>
       <div id="mem-list" class="mem-list"></div>
+      <div id="mem-load-more" class="mem-load-more" hidden>
+        <button type="button" id="mem-more-btn" class="ghost">Load more</button>
+      </div>
+    </section>
+
+    <!-- ── Watch ─────────────────────────────────────────────── -->
+    <section id="panel-watch" class="panel">
+      <div class="watch-header">
+        <div>
+          <h2 class="watch-title">Browser Watch</h2>
+          <p class="watch-sub muted">Scrappy monitors Chrome tabs for changes and reports them here.</p>
+        </div>
+        <button id="watch-refresh" class="ghost">Refresh</button>
+      </div>
+
+      <div class="watch-start-box card">
+        <h3>Start watching a tab</h3>
+        <p class="muted">Type what you want Scrappy to monitor, then send it as a chat message.</p>
+        <div class="watch-form-row">
+          <input id="watch-prompt-input" type="text"
+            placeholder="e.g. keep an eye on my Stripe dashboard tab" />
+          <button id="watch-send-btn">Ask Scrappy</button>
+        </div>
+        <p class="muted" style="margin-top: 0.5rem; font-size:0.78rem;">
+          Scrappy will list your open Chrome tabs, you pick one, and he'll start monitoring it every 2 minutes.
+        </p>
+      </div>
+
+      <div id="watch-status-area">
+        <div class="watch-section-label">Recent changes</div>
+        <div id="watch-events" class="watch-events">
+          <div class="muted watch-empty">No tab events yet. Start watching a tab above.</div>
+        </div>
+      </div>
     </section>
 
     <!-- ── System ────────────────────────────────────────────── -->
@@ -155,11 +191,32 @@
         high, trivia low.
       </p>
 
+      <h3>Browser Watch</h3>
+      <p>
+        Scrappy can monitor any open Chrome tab for changes. When the content
+        changes, he analyses the diff, sends you a macOS notification, and logs
+        the summary in the <strong>Watch</strong> tab here.
+      </p>
+      <ul>
+        <li>Go to the <strong>Watch</strong> tab and type what you want him to
+          monitor — e.g. <em>"keep an eye on my Stripe dashboard"</em>.</li>
+        <li>Scrappy lists your open tabs, you pick one, and the watcher starts
+          (every 2 minutes by default).</li>
+        <li>Or say it in the <strong>Voice</strong> loop — same flow.</li>
+        <li>To stop: say <em>"stop watching"</em> in Chat or Voice.</li>
+      </ul>
+      <p class="muted">
+        The watcher runs locally on your Mac via the voice agent
+        (<code>python -m apps.mac_agent.voice_loop</code>). It needs Chrome
+        open — no extension required.
+      </p>
+
       <h3>Voice vs. web</h3>
       <p>
         This console talks over the same brain as the Mac push-to-talk client.
-        Mac-control tools (open apps, notify, speak) only show up on the voice
-        channel — here you get chat, memory, and expert delegation.
+        Mac-control tools (open apps, notify, speak, browser watch) only show up
+        on the voice channel — here you get chat, memory, browser watch shortcuts,
+        and expert delegation.
       </p>
 
       <h3>Tips</h3>
@@ -170,6 +227,8 @@
         <li>Watching the inline <span class="chip chip-demo">→ tool</span> /
           <span class="chip chip-demo">✓ result</span> chips tells you exactly
           what Scrappy did to answer.</li>
+        <li>The <strong>System</strong> tab shows which connectors and experts are
+          live — if an expert is missing, it means its connector isn't installed.</li>
       </ul>
     </section>
   </main>

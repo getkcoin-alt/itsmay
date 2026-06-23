@@ -30,6 +30,9 @@ import numpy as np
 import sounddevice as sd
 from dotenv import load_dotenv
 
+from apps.mac_agent.chrome import format_tab_list, list_tabs, read_tab_text
+from apps.mac_agent.tab_watcher import TabWatcher
+
 # Load .env from cwd so VAULT_API_BASE / VAULT_API_KEY work without manual exports.
 load_dotenv()
 
@@ -45,6 +48,9 @@ MIN_CHUNK_CHARS = 18
 
 # Mac tools that require explicit confirmation before running.
 APPROVAL_REQUIRED = {"mac.run_applescript"}
+
+# Module-level watcher — only one tab watched at a time.
+_active_watcher: TabWatcher | None = None
 
 
 def _default_headers() -> dict[str, str]:
@@ -198,12 +204,13 @@ def _run_silent(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 
 def execute_mac_tool(name: str, args: dict) -> str:
-    """Run a `mac.*` tool locally and return a short human-readable status.
+    """Run a `mac.*` or `browser.*` tool locally and return a short status.
 
     All commands use explicit arg lists — never shell=True. stdin is pinned
     to DEVNULL on every child so they can't eat keystrokes meant for the
     record-until-enter loop. AppleScript strings are escaped via json.dumps.
     """
+    global _active_watcher
     try:
         if name == "mac.open_app":
             app = str(args.get("name", "")).strip()
@@ -250,6 +257,42 @@ def execute_mac_tool(name: str, args: dict) -> str:
             out = (r.stdout or "").strip() or "(no output)"
             err = (r.stderr or "").strip()
             return f"ran applescript → {out}" + (f"  | stderr: {err}" if err else "")
+
+        # ── browser tools ─────────────────────────────────────────
+        if name == "browser.list_tabs":
+            tabs = list_tabs()
+            return format_tab_list(tabs)
+
+        if name == "browser.read_tab":
+            win = int(args.get("win", 1))
+            tab = int(args.get("tab", 1))
+            content = read_tab_text(win, tab)
+            return content[:8000] if content else "(empty tab)"
+
+        if name == "browser.watch_start":
+            if _active_watcher and _active_watcher.running:
+                _active_watcher.stop()
+            win = int(args.get("win", 1))
+            tab = int(args.get("tab", 1))
+            interval = int(args.get("interval", 120))
+            # Resolve title/url for the chosen tab.
+            tabs = list_tabs()
+            meta = next((t for t in tabs if t["win"] == win and t["tab"] == tab), {})
+            _active_watcher = TabWatcher(
+                win=win,
+                tab=tab,
+                interval=interval,
+                api_base=API_BASE,
+                api_key=API_KEY,
+                title=meta.get("title", ""),
+                url=meta.get("url", ""),
+            )
+            return _active_watcher.start()
+
+        if name == "browser.watch_stop":
+            if _active_watcher and _active_watcher.running:
+                return _active_watcher.stop()
+            return "no active tab watch"
 
         return f"[mac] unknown tool: {name}"
     except Exception as e:  # never let a tool blow up the loop
