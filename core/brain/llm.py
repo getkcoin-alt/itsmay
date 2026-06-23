@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import httpx
@@ -25,6 +25,89 @@ import httpx
 from core.config import get_settings
 from core.logging import get_logger
 from core.util.keypool import KeyPool, parse_retry_after
+
+
+@dataclass(slots=True)
+class _InlineToolCallParser:
+    """Strips Llama-style `<function=name>{json}</function>` markers out of a
+    streaming content channel and accumulates them as structured tool calls.
+
+    Some Groq models (Llama 3.x family) emit tool calls inline in the content
+    stream instead of populating `delta.tool_calls`. Without this parser those
+    markers leak to TTS and the actual tool never fires."""
+
+    TAG_START: str = "<function="
+    TAG_END: str = "</function>"
+    _pending: str = ""
+    _in_tag: bool = False
+    _tag_buf: str = ""
+    tool_calls: list[dict] = field(default_factory=list)
+
+    def feed(self, delta: str) -> str:
+        """Append delta and return the substring safe to emit downstream."""
+        self._pending += delta
+        out: list[str] = []
+        while self._pending:
+            if not self._in_tag:
+                start_idx = self._pending.find(self.TAG_START)
+                if start_idx == -1:
+                    # Hold back the tail in case TAG_START spans a future delta.
+                    keep = len(self.TAG_START) - 1
+                    safe_len = max(0, len(self._pending) - keep)
+                    if safe_len > 0:
+                        out.append(self._pending[:safe_len])
+                        self._pending = self._pending[safe_len:]
+                    break
+                if start_idx > 0:
+                    out.append(self._pending[:start_idx])
+                self._pending = self._pending[start_idx + len(self.TAG_START) :]
+                self._in_tag = True
+                self._tag_buf = ""
+            else:
+                end_idx = self._pending.find(self.TAG_END)
+                if end_idx == -1:
+                    keep = len(self.TAG_END) - 1
+                    safe_len = max(0, len(self._pending) - keep)
+                    if safe_len > 0:
+                        self._tag_buf += self._pending[:safe_len]
+                        self._pending = self._pending[safe_len:]
+                    break
+                self._tag_buf += self._pending[:end_idx]
+                self._pending = self._pending[end_idx + len(self.TAG_END) :]
+                self._commit_tag()
+                self._in_tag = False
+                self._tag_buf = ""
+        return "".join(out)
+
+    def flush(self) -> str:
+        """End-of-stream: emit anything left. Treat a half-open tag as text."""
+        if self._in_tag:
+            out = self.TAG_START + self._tag_buf + self._pending
+            self._in_tag = False
+            self._tag_buf = ""
+        else:
+            out = self._pending
+        self._pending = ""
+        return out
+
+    def _commit_tag(self) -> None:
+        # `_tag_buf` is "name>{json}"
+        gt = self._tag_buf.find(">")
+        if gt == -1:
+            return
+        name = self._tag_buf[:gt].strip()
+        args_str = self._tag_buf[gt + 1 :].strip()
+        try:
+            args = json.loads(args_str) if args_str else {}
+        except json.JSONDecodeError:
+            args = {"_raw": args_str}
+        self.tool_calls.append(
+            {
+                "id": f"inline_{len(self.tool_calls)}",
+                "name": name,
+                "arguments": args,
+            }
+        )
 
 log = get_logger(__name__)
 
@@ -157,10 +240,11 @@ class LLMClient:
             completion_tokens: int | None = None
             # Streaming tool_call accumulators, keyed by `index`.
             tc_state: dict[int, dict] = {}
+            # Strips Llama-style <function=...> tool-call markers out of the
+            # content stream and reconstructs them as structured calls.
+            inline_parser = _InlineToolCallParser()
 
             def _finalize_tool_calls() -> list[dict] | None:
-                if not tc_state:
-                    return None
                 out: list[dict] = []
                 for _idx, st in sorted(tc_state.items()):
                     args_str = st.get("arguments_str", "")
@@ -175,15 +259,23 @@ class LLMClient:
                             "arguments": args_obj,
                         }
                     )
-                return out
+                # Include inline-parsed calls (deduped by name+args).
+                seen = {(t["name"], json.dumps(t["arguments"], sort_keys=True)) for t in out}
+                for t in inline_parser.tool_calls:
+                    key = (t["name"], json.dumps(t["arguments"], sort_keys=True))
+                    if key not in seen:
+                        out.append(t)
+                        seen.add(key)
+                return out or None
 
             async for line in resp.aiter_lines():
                 if not line or not line.startswith("data:"):
                     continue
                 data_str = line[5:].strip()
                 if data_str == "[DONE]":
+                    tail = inline_parser.flush()
                     yield ChatChunk(
-                        delta="",
+                        delta=tail,
                         done=True,
                         prompt_eval_count=prompt_tokens,
                         eval_count=completion_tokens,
@@ -204,7 +296,10 @@ class LLMClient:
                     continue
                 choice = choices[0]
                 delta_obj = choice.get("delta") or {}
-                delta = delta_obj.get("content") or ""
+                raw_delta = delta_obj.get("content") or ""
+                # Run content through the inline tool-call stripper; only the
+                # "safe" remainder gets yielded to the caller.
+                delta = inline_parser.feed(raw_delta) if raw_delta else ""
 
                 # Accumulate streamed tool_calls per OpenAI tool-call delta format.
                 for tc in delta_obj.get("tool_calls") or []:
@@ -221,16 +316,24 @@ class LLMClient:
                         st["arguments_str"] += fn["arguments"]
 
                 finish = choice.get("finish_reason")
-                if delta or finish:
+                if finish:
+                    # Flush any tail held back by the inline parser.
+                    tail = inline_parser.flush()
                     yield ChatChunk(
-                        delta=delta,
-                        done=bool(finish),
+                        delta=delta + tail,
+                        done=True,
                         prompt_eval_count=prompt_tokens,
                         eval_count=completion_tokens,
-                        tool_calls=_finalize_tool_calls() if finish else None,
+                        tool_calls=_finalize_tool_calls(),
                     )
-                    if finish:
-                        return
+                    return
+                if delta:
+                    yield ChatChunk(
+                        delta=delta,
+                        done=False,
+                        prompt_eval_count=prompt_tokens,
+                        eval_count=completion_tokens,
+                    )
         finally:
             await resp.aclose()
 
