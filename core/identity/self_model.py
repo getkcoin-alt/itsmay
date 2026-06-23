@@ -21,7 +21,7 @@ async def render_self_context() -> str:
 
     lines = [
         f"Agent: Scrappy Singh  |  Version: {VERSION}  |  Model: {s.ollama_model}",
-        f"Operator: {s.user_handle}",
+        "Operator: Karnveer Singh (handle: karnveer). Spell his name exactly: K-A-R-N-V-E-E-R.",
         f"Today: {date.today().isoformat()}",
         f"Mission: {s.mission_statement}",
         f"Target date: {target.isoformat()}  ({days_left} days remaining)",

@@ -112,7 +112,9 @@ async def stream_chat(client: httpx.AsyncClient, text: str, session_id: str | No
                 event = line[6:].strip()
                 continue
             if line.startswith("data:"):
-                data = line[5:].lstrip()
+                # SSE: strip exactly ONE leading space (the field-format space),
+                # not all whitespace — token deltas often start with a space.
+                data = line[6:] if line.startswith("data: ") else line[5:]
                 yield event, data
                 if event == "done" or event == "error":
                     return
