@@ -14,6 +14,7 @@ from apps.api.deps import get_embedder, get_episodic, get_llm, get_semantic
 from core.brain.context_builder import build_messages
 from core.brain.llm import LLMClient
 from core.config import get_settings
+from core.connectors.registry import get_registry
 from core.identity.self_model import render_self_context
 from core.logging import get_logger
 from core.memory.embedder import Embedder
@@ -103,20 +104,50 @@ async def chat(
         t0 = time.perf_counter()
         prompt_tokens = None
         completion_tokens = None
+        tool_calls: list[dict] | None = None
+
+        # Voice channel can execute Mac tools. Skip tools for plain API calls
+        # so non-voice clients aren't surprised by client-only tool invocations.
+        registry = get_registry()
+        tools_payload = registry.tools_openai() if voice_mode else None
 
         try:
-            async for chunk in llm.chat_stream(messages, temperature=body.temperature):
+            async for chunk in llm.chat_stream(
+                messages, temperature=body.temperature, tools=tools_payload
+            ):
                 if chunk.delta:
                     full.append(chunk.delta)
                     yield {"event": "token", "data": chunk.delta}
                 if chunk.done:
                     prompt_tokens = chunk.prompt_eval_count
                     completion_tokens = chunk.eval_count
+                    tool_calls = chunk.tool_calls
                     break
         except Exception as e:
             log.exception("chat.stream_failed", err=str(e))
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
             return
+
+        # Forward client-executed tool calls (mac.*, browser_local.*, etc.) as
+        # SSE events so the voice agent can run them. Server-executed tools
+        # aren't wired into this single-pass flow yet.
+        if tool_calls:
+            for tc in tool_calls:
+                executor = registry.executor_for(tc.get("name", "")) or "server"
+                if executor == "client_mac":
+                    yield {
+                        "event": "tool_call",
+                        "data": json.dumps(
+                            {
+                                "id": tc.get("id"),
+                                "name": tc.get("name"),
+                                "arguments": tc.get("arguments") or {},
+                                "executor": executor,
+                            }
+                        ),
+                    }
+                else:
+                    log.warning("chat.unrouted_tool_call", tool=tc.get("name"))
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
         assistant_text = "".join(full).strip()

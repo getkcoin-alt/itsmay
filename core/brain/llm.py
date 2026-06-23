@@ -47,6 +47,9 @@ class ChatChunk:
     done: bool
     eval_count: int | None = None
     prompt_eval_count: int | None = None
+    # Populated on the final (done=True) chunk if the model emitted tool calls.
+    # Each item: {"id": str, "name": str, "arguments": dict}
+    tool_calls: list[dict] | None = None
 
 
 class LLMClient:
@@ -75,9 +78,13 @@ class LLMClient:
         *,
         temperature: float = 0.7,
         num_ctx: int = 8192,
+        tools: list[dict] | None = None,
+        tool_choice: str = "auto",
     ) -> AsyncIterator[ChatChunk]:
         if self.provider == "openai":
-            async for chunk in self._chat_stream_openai(messages, temperature):
+            async for chunk in self._chat_stream_openai(
+                messages, temperature, tools=tools, tool_choice=tool_choice
+            ):
                 yield chunk
         elif self.provider == "ollama":
             async for chunk in self._chat_stream_ollama(messages, temperature, num_ctx):
@@ -116,15 +123,23 @@ class LLMClient:
         return last_resp
 
     async def _chat_stream_openai(
-        self, messages: list[Message], temperature: float
+        self,
+        messages: list[Message],
+        temperature: float,
+        *,
+        tools: list[dict] | None = None,
+        tool_choice: str = "auto",
     ) -> AsyncIterator[ChatChunk]:
-        payload = {
+        payload: dict = {
             "model": self.model,
             "messages": [m.to_dict() for m in messages],
             "stream": True,
             "stream_options": {"include_usage": True},
             "temperature": temperature,
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
         resp = await self._open_openai_stream(payload)
         try:
             if resp.status_code >= 400:
@@ -140,6 +155,28 @@ class LLMClient:
 
             prompt_tokens: int | None = None
             completion_tokens: int | None = None
+            # Streaming tool_call accumulators, keyed by `index`.
+            tc_state: dict[int, dict] = {}
+
+            def _finalize_tool_calls() -> list[dict] | None:
+                if not tc_state:
+                    return None
+                out: list[dict] = []
+                for _idx, st in sorted(tc_state.items()):
+                    args_str = st.get("arguments_str", "")
+                    try:
+                        args_obj = json.loads(args_str) if args_str else {}
+                    except json.JSONDecodeError:
+                        args_obj = {"_raw": args_str}
+                    out.append(
+                        {
+                            "id": st.get("id") or f"call_{_idx}",
+                            "name": st.get("name") or "",
+                            "arguments": args_obj,
+                        }
+                    )
+                return out
+
             async for line in resp.aiter_lines():
                 if not line or not line.startswith("data:"):
                     continue
@@ -150,6 +187,7 @@ class LLMClient:
                         done=True,
                         prompt_eval_count=prompt_tokens,
                         eval_count=completion_tokens,
+                        tool_calls=_finalize_tool_calls(),
                     )
                     return
                 try:
@@ -165,7 +203,23 @@ class LLMClient:
                 if not choices:
                     continue
                 choice = choices[0]
-                delta = (choice.get("delta") or {}).get("content") or ""
+                delta_obj = choice.get("delta") or {}
+                delta = delta_obj.get("content") or ""
+
+                # Accumulate streamed tool_calls per OpenAI tool-call delta format.
+                for tc in delta_obj.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    st = tc_state.setdefault(
+                        idx, {"id": None, "name": None, "arguments_str": ""}
+                    )
+                    if tc.get("id"):
+                        st["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        st["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        st["arguments_str"] += fn["arguments"]
+
                 finish = choice.get("finish_reason")
                 if delta or finish:
                     yield ChatChunk(
@@ -173,6 +227,7 @@ class LLMClient:
                         done=bool(finish),
                         prompt_eval_count=prompt_tokens,
                         eval_count=completion_tokens,
+                        tool_calls=_finalize_tool_calls() if finish else None,
                     )
                     if finish:
                         return

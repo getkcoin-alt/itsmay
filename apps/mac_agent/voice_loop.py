@@ -43,6 +43,9 @@ SESSION_FILE = Path.home() / ".vault_zeta_session"
 PHRASE_BREAK = re.compile(r"([.!?\n,;—–:])\s+")
 MIN_CHUNK_CHARS = 18
 
+# Mac tools that require explicit confirmation before running.
+APPROVAL_REQUIRED = {"mac.run_applescript"}
+
 
 def _default_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {API_KEY}"} if API_KEY else {}
@@ -166,6 +169,74 @@ class AudioPlayer:
         self._thread.join(timeout=2)
 
 
+# ── Mac tool execution (client-side) ────────────────────────────
+def _confirm(prompt: str) -> bool:
+    print(f"\n[approval needed] {prompt}", flush=True)
+    try:
+        ans = input("    type 'y' then ENTER to allow, anything else to skip: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return ans == "y"
+
+
+def execute_mac_tool(name: str, args: dict) -> str:
+    """Run a `mac.*` tool locally and return a short human-readable status.
+
+    All commands use explicit arg lists — never shell=True. AppleScript
+    embeds use `json.dumps` for safe string escaping inside `-e` payloads.
+    """
+    try:
+        if name == "mac.open_app":
+            app = str(args.get("name", "")).strip()
+            if not app:
+                return "[mac.open_app] missing 'name'"
+            subprocess.run(["open", "-a", app], check=False)
+            return f"opened app: {app}"
+
+        if name == "mac.open_url":
+            url = str(args.get("url", "")).strip()
+            if not url:
+                return "[mac.open_url] missing 'url'"
+            subprocess.run(["open", url], check=False)
+            return f"opened url: {url}"
+
+        if name == "mac.notify":
+            title = str(args.get("title", "Scrappy"))
+            body = str(args.get("body", ""))
+            script = (
+                f"display notification {json.dumps(body)} "
+                f"with title {json.dumps(title)}"
+            )
+            subprocess.run(["osascript", "-e", script], check=False)
+            return f"notified: {title}"
+
+        if name == "mac.say":
+            text = str(args.get("text", ""))
+            if not text:
+                return "[mac.say] empty text"
+            subprocess.run(["say", text], check=False)
+            return "spoke (via macOS say)"
+
+        if name == "mac.run_applescript":
+            script = str(args.get("script", "")).strip()
+            if not script:
+                return "[mac.run_applescript] empty script"
+            if name in APPROVAL_REQUIRED:
+                print(f"\n--- script ---\n{script}\n--- end ---")
+                if not _confirm("Scrappy wants to run the AppleScript above."):
+                    return "[mac.run_applescript] declined by user"
+            r = subprocess.run(
+                ["osascript", "-e", script], capture_output=True, text=True, check=False
+            )
+            out = (r.stdout or "").strip() or "(no output)"
+            err = (r.stderr or "").strip()
+            return f"ran applescript → {out}" + (f"  | stderr: {err}" if err else "")
+
+        return f"[mac] unknown tool: {name}"
+    except Exception as e:  # never let a tool blow up the loop
+        return f"[mac.error] {type(e).__name__}: {e}"
+
+
 # ── phrase splitter ─────────────────────────────────────────────
 def pop_phrase(buf: str) -> tuple[str | None, str]:
     """Pop the first phrase ending at a natural break (. ! ? , ; : — \\n).
@@ -239,6 +310,18 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
                     if phrase is None:
                         break
                     tts_tasks.append(asyncio.create_task(synth(phrase)))
+            elif evt == "tool_call":
+                try:
+                    tc = json.loads(data)
+                except json.JSONDecodeError:
+                    print(f"\n[tool_call bad json] {data[:200]}", file=sys.stderr)
+                    continue
+                tname = tc.get("name", "")
+                targs = tc.get("arguments") or {}
+                print(f"\n→ {tname}({json.dumps(targs)})", flush=True)
+                # Execute synchronously off the event loop to avoid blocking SSE.
+                result = await asyncio.to_thread(execute_mac_tool, tname, targs)
+                print(f"  {result}", flush=True)
             elif evt == "done":
                 break
             elif evt == "error":
