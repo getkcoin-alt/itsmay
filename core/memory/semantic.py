@@ -24,6 +24,20 @@ class RetrievedMemory:
     created_at: datetime
 
 
+@dataclass(slots=True)
+class MemoryRow:
+    """A stored memory without a similarity score — for browsing/management."""
+
+    id: UUID
+    kind: MemoryKind
+    content: str
+    source: str | None
+    importance: float
+    created_at: datetime
+    last_used_at: datetime | None
+    use_count: int
+
+
 class SemanticStore:
     async def write(
         self,
@@ -102,3 +116,63 @@ class SemanticStore:
                 )
                 for r in rows
             ]
+
+    # ── management / browsing (no embedding involved) ────────────────
+    async def list_recent(
+        self,
+        user_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        kind: MemoryKind | None = None,
+    ) -> list[MemoryRow]:
+        """Newest-first page of stored memories, for the console browser."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, kind, content, source, importance,
+                       created_at, last_used_at, use_count
+                FROM memories
+                WHERE user_id = $1
+                  AND ($4::memory_kind IS NULL OR kind = $4)
+                ORDER BY created_at DESC
+                LIMIT $2 OFFSET $3
+                """,
+                user_id,
+                limit,
+                offset,
+                kind,
+            )
+            return [
+                MemoryRow(
+                    id=r["id"],
+                    kind=r["kind"],
+                    content=r["content"],
+                    source=r["source"],
+                    importance=r["importance"],
+                    created_at=r["created_at"],
+                    last_used_at=r["last_used_at"],
+                    use_count=r["use_count"],
+                )
+                for r in rows
+            ]
+
+    async def count(self, user_id: UUID) -> int:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT count(*) FROM memories WHERE user_id = $1", user_id
+            )
+
+    async def delete(self, user_id: UUID, memory_id: UUID) -> bool:
+        """Delete one memory. Returns True if a row was removed."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM memories WHERE id = $1 AND user_id = $2",
+                memory_id,
+                user_id,
+            )
+            # asyncpg returns e.g. "DELETE 1"
+            return result.rsplit(" ", 1)[-1] != "0"

@@ -41,7 +41,8 @@ vault-zeta/
 │   ├── api/                 FastAPI app + middleware + routers
 │   │   ├── main.py
 │   │   ├── middleware/auth.py
-│   │   └── routers/{chat,voice}.py
+│   │   ├── routers/{chat,voice,console}.py
+│   │   └── static/          web console SPA (index.html, app.js, styles.css)
 │   └── mac_agent/           push-to-talk Mac client (not shipped to Railway)
 ├── core/
 │   ├── brain/llm.py         multi-provider LLM client
@@ -174,6 +175,29 @@ can also drop facts/reflections in directly to test retrieval.
 
 ---
 
+## Web console
+
+Browsing the deployment's root URL (`/`) serves a self-contained management
+console — a vanilla SPA (no build step) served straight from FastAPI out of
+`apps/api/static/`. It talks to the same API over the same origin, so there's
+no CORS and no separate deploy. Four tabs:
+
+- **Chat** — stream a conversation with Scrappy. Tool calls and expert
+  delegations show up inline as chips so you can see what he did to answer.
+  (Uses `fetch` + `ReadableStream` to read the SSE stream, since the browser's
+  `EventSource` can't send the bearer header.)
+- **Memory** — browse, semantically search, hand-add, and delete entries in the
+  pgvector store (`/v1/console/memory`).
+- **System** — which connectors are installed and which experts are live
+  (with health), straight from `/v1/console/status`.
+- **Guide** — a short "how to use Scrappy" primer.
+
+Auth: the page shell (`/`, `/static/*`, `/status`) loads without a token so it
+can prompt for the key; every `/v1` data call carries
+`Authorization: Bearer <VAULT_API_KEY>`. The key is held in the browser's
+localStorage (gear icon, top-right). In open mode (empty `VAULT_API_KEY`) no key
+is needed.
+
 ## Agent architecture: orchestrator + experts
 
 Scrappy is an *orchestrator*. Each turn runs a multi-turn tool loop
@@ -210,6 +234,8 @@ That's it — `ask_<name>` appears in Scrappy's toolbox automatically.
 3. ✓ Connector framework + Mac control connector
 4. ✓ Multi-turn agentic tool loop + sub-agent (expert) framework
 5. ✓ Long-term memory tools (Memory Keeper expert)
-6. Gmail / Calendar connectors → email + calendar experts
-7. Goals/tasks + planner/executor expert
-8. Critic + Learner + nightly memory consolidation
+6. ✓ Gmail connector → Email expert
+7. ✓ Web console (chat + memory browser + system status + guide)
+8. Calendar connector → calendar expert
+9. Goals/tasks + planner/executor expert
+10. Critic + Learner + nightly memory consolidation
