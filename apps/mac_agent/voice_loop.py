@@ -137,12 +137,18 @@ async def tts_to_file(client: httpx.AsyncClient, text: str, out: Path) -> None:
 
 # ── audio playback queue ────────────────────────────────────────
 class AudioPlayer:
-    """Background thread that plays queued MP3 files sequentially via `afplay`."""
+    """Background thread that plays queued MP3 files sequentially via `afplay`.
+
+    `afplay` is invoked with stdin=DEVNULL so it can't consume the user's
+    ENTER keystroke while audio is playing (the bug that made the second
+    push-to-talk press silently disappear).
+    """
 
     _SENTINEL: object = object()
 
     def __init__(self) -> None:
         self.q: queue.Queue = queue.Queue()
+        self._busy = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -152,16 +158,21 @@ class AudioPlayer:
             if item is self._SENTINEL:
                 return
             path: Path = item
+            self._busy.set()
             try:
-                subprocess.run(["afplay", str(path)], check=False)
+                subprocess.run(["afplay", str(path)], check=False, stdin=subprocess.DEVNULL)
             finally:
                 path.unlink(missing_ok=True)
+                self._busy.clear()
 
     def play(self, path: Path) -> None:
         self.q.put(path)
 
     async def drain(self) -> None:
-        while not self.q.empty():
+        # Wait until both the queue is empty AND the current item finished
+        # playing — otherwise drain returns mid-utterance and the next
+        # input() prompt overlaps the tail of the audio.
+        while not self.q.empty() or self._busy.is_set():
             await asyncio.sleep(0.05)
 
     def shutdown(self) -> None:
@@ -179,25 +190,33 @@ def _confirm(prompt: str) -> bool:
     return ans == "y"
 
 
+def _run_silent(cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    """Run a subprocess with stdin pinned to /dev/null so the child can't
+    swallow the user's ENTER keystroke while it's running."""
+    kw.setdefault("stdin", subprocess.DEVNULL)
+    return subprocess.run(cmd, check=False, **kw)
+
+
 def execute_mac_tool(name: str, args: dict) -> str:
     """Run a `mac.*` tool locally and return a short human-readable status.
 
-    All commands use explicit arg lists — never shell=True. AppleScript
-    embeds use `json.dumps` for safe string escaping inside `-e` payloads.
+    All commands use explicit arg lists — never shell=True. stdin is pinned
+    to DEVNULL on every child so they can't eat keystrokes meant for the
+    record-until-enter loop. AppleScript strings are escaped via json.dumps.
     """
     try:
         if name == "mac.open_app":
             app = str(args.get("name", "")).strip()
             if not app:
                 return "[mac.open_app] missing 'name'"
-            subprocess.run(["open", "-a", app], check=False)
+            _run_silent(["open", "-a", app])
             return f"opened app: {app}"
 
         if name == "mac.open_url":
             url = str(args.get("url", "")).strip()
             if not url:
                 return "[mac.open_url] missing 'url'"
-            subprocess.run(["open", url], check=False)
+            _run_silent(["open", url])
             return f"opened url: {url}"
 
         if name == "mac.notify":
@@ -207,14 +226,14 @@ def execute_mac_tool(name: str, args: dict) -> str:
                 f"display notification {json.dumps(body)} "
                 f"with title {json.dumps(title)}"
             )
-            subprocess.run(["osascript", "-e", script], check=False)
+            _run_silent(["osascript", "-e", script])
             return f"notified: {title}"
 
         if name == "mac.say":
             text = str(args.get("text", ""))
             if not text:
                 return "[mac.say] empty text"
-            subprocess.run(["say", text], check=False)
+            _run_silent(["say", text])
             return "spoke (via macOS say)"
 
         if name == "mac.run_applescript":
@@ -225,8 +244,8 @@ def execute_mac_tool(name: str, args: dict) -> str:
                 print(f"\n--- script ---\n{script}\n--- end ---")
                 if not _confirm("Scrappy wants to run the AppleScript above."):
                     return "[mac.run_applescript] declined by user"
-            r = subprocess.run(
-                ["osascript", "-e", script], capture_output=True, text=True, check=False
+            r = _run_silent(
+                ["osascript", "-e", script], capture_output=True, text=True
             )
             out = (r.stdout or "").strip() or "(no output)"
             err = (r.stderr or "").strip()
