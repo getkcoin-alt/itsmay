@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # ── TTS (ElevenLabs) ──────────────────────────────────────────
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
-    elevenlabs_model_id: str = "eleven_turbo_v2_5"
+    elevenlabs_model_id: str = "eleven_flash_v2_5"
     elevenlabs_output_format: str = "mp3_44100_128"
 
     # ── Identity / mission ────────────────────────────────────────

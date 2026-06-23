@@ -17,8 +17,11 @@ from core.brain.llm import Message
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
-def load_system_prompt() -> str:
-    return (PROMPTS_DIR / "system_scrappy.md").read_text(encoding="utf-8").strip()
+def load_system_prompt(voice_mode: bool = False) -> str:
+    """Voice mode uses a much-compacted persona prompt — every token saved here
+    is shaved off LLM time-to-first-token, which the user hears as silence."""
+    fname = "system_scrappy_voice.md" if voice_mode else "system_scrappy.md"
+    return (PROMPTS_DIR / fname).read_text(encoding="utf-8").strip()
 
 
 VOICE_MODE_RULES = """## VOICE MODE
@@ -42,7 +45,12 @@ def build_messages(
     voice_mode: bool = False,
 ) -> list[Message]:
     """Compose the full prompt for one turn."""
-    parts: list[str] = [load_system_prompt(), "", "## CURRENT STATE", self_context.strip()]
+    parts: list[str] = [
+        load_system_prompt(voice_mode=voice_mode),
+        "",
+        "## CURRENT STATE",
+        self_context.strip(),
+    ]
 
     if voice_mode:
         parts += ["", VOICE_MODE_RULES]

@@ -64,15 +64,20 @@ async def chat(
         session_id, "user", body.message, embedding=user_embedding
     )
 
-    # Pull recent window + retrieved semantic memories in parallel-ish (single conn each).
-    recent = await episodic.recent_window(session_id, settings.recent_message_window)
-    retrieved = await semantic.search(user_id, user_embedding, k=settings.retrieval_k)
+    # Pull recent window + retrieved semantic memories.
+    # Voice mode pulls fewer memories — every token shaved off prompt is felt
+    # as silence by the user. Voice also takes a shorter conversation window.
+    voice_mode = "voice" in (body.channel or "").lower()
+    retrieval_k = 3 if voice_mode else settings.retrieval_k
+    recent_n = 6 if voice_mode else settings.recent_message_window
+
+    recent = await episodic.recent_window(session_id, recent_n)
+    retrieved = await semantic.search(user_id, user_embedding, k=retrieval_k)
     self_ctx = await render_self_context()
 
     # Drop the latest user message from recent (we add it back as the live turn).
     recent_for_prompt = [m for m in recent if not (m.role == "user" and m.content == body.message)]
 
-    voice_mode = "voice" in (body.channel or "").lower()
     messages = build_messages(
         self_context=self_ctx,
         retrieved_memories=[m.content for m in retrieved],

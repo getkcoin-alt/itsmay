@@ -38,7 +38,10 @@ API_KEY = os.environ.get("VAULT_API_KEY", "")
 SAMPLE_RATE = 16000  # whisper native
 MIN_RECORDING_SEC = 0.3
 SESSION_FILE = Path.home() / ".vault_zeta_session"
-SENTENCE_BREAK = re.compile(r"([.!?\n])\s+")
+# Phrase break — fires sooner than full sentence so first audio starts ~250ms earlier.
+# We also enforce MIN_CHUNK_CHARS so we don't TTS single words.
+PHRASE_BREAK = re.compile(r"([.!?\n,;—–:])\s+")
+MIN_CHUNK_CHARS = 18
 
 
 def _default_headers() -> dict[str, str]:
@@ -163,14 +166,21 @@ class AudioPlayer:
         self._thread.join(timeout=2)
 
 
-# ── sentence splitter ───────────────────────────────────────────
-def pop_sentence(buf: str) -> tuple[str | None, str]:
-    """If `buf` contains a full sentence, return (sentence, remainder). Else (None, buf)."""
-    m = SENTENCE_BREAK.search(buf)
-    if not m:
-        return None, buf
-    end = m.end()
-    return buf[:end].strip(), buf[end:]
+# ── phrase splitter ─────────────────────────────────────────────
+def pop_phrase(buf: str) -> tuple[str | None, str]:
+    """Pop the first phrase ending at a natural break (. ! ? , ; : — \\n).
+
+    Skips breaks that fire too early so we don't synthesize 1-2 word fragments;
+    when the chunk is long enough (>= MIN_CHUNK_CHARS) it ships to TTS so the
+    first audio bytes start arriving while the LLM is still emitting tokens.
+    """
+    last_end = 0
+    for m in PHRASE_BREAK.finditer(buf):
+        end = m.end()
+        if end >= MIN_CHUNK_CHARS:
+            return buf[:end].strip(), buf[end:]
+        last_end = end
+    return None, buf
 
 
 # ── main loop ───────────────────────────────────────────────────
@@ -224,10 +234,10 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
             print(data, end="", flush=True)
             buf += data
             while True:
-                sentence, buf = pop_sentence(buf)
-                if sentence is None:
+                phrase, buf = pop_phrase(buf)
+                if phrase is None:
                     break
-                tts_tasks.append(asyncio.create_task(synth(sentence)))
+                tts_tasks.append(asyncio.create_task(synth(phrase)))
         elif evt == "done":
             break
         elif evt == "error":
