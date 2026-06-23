@@ -1,17 +1,22 @@
-"""Embeddings client. Provider-agnostic, with rotating API keys.
+"""Embeddings client. Local-first by default, optional remote providers.
 
 Providers selected by `EMBED_PROVIDER`:
 
-- `openai` (default) — any OpenAI-compatible `/v1/embeddings` endpoint
-  (OpenAI, Together AI, Voyage via compat layer, etc.). Default model is
-  OpenAI `text-embedding-3-small` (1536 dim).
-- `ollama` — Ollama's `/api/embeddings`. Local-only dev.
+- `local` (default) — `fastembed` running ONNX in-process. No external API,
+  no rate limits, no per-request cost. Default model is `BAAI/bge-small-en-v1.5`
+  (384 dim, ~120MB quantized download on first request).
+- `openai` — any OpenAI-compatible `/v1/embeddings` endpoint (OpenAI, Voyage,
+  Together, Mistral). Comma-separated `EMBED_API_KEY` rotates on 429/401.
+- `ollama` — Ollama's `/api/embeddings`. Local-only dev with Ollama.
 
-`EMBED_API_KEY` can be a single key OR comma-separated. Rotation behavior
-matches `core/util/keypool.KeyPool`.
+The public surface (`embed`, `health`) is identical across providers.
 """
 
 from __future__ import annotations
+
+import asyncio
+import threading
+from typing import Any
 
 import httpx
 import numpy as np
@@ -40,12 +45,16 @@ class Embedder:
             api_key if api_key is not None else s.embed_api_key, label="embed"
         )
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+        self._local_model: Any | None = None
+        self._local_lock = threading.Lock()
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
     async def embed(self, text: str) -> np.ndarray:
-        if self.provider == "openai":
+        if self.provider == "local":
+            vec = await self._embed_local(text)
+        elif self.provider == "openai":
             vec = await self._embed_openai(text)
         elif self.provider == "ollama":
             vec = await self._embed_ollama(text)
@@ -61,6 +70,28 @@ class Embedder:
             )
         return arr
 
+    # ── local fastembed ──────────────────────────────────────────
+    def _ensure_local_loaded_sync(self) -> Any:
+        # `fastembed` import is heavy (loads onnxruntime); defer to first call.
+        with self._local_lock:
+            if self._local_model is None:
+                from fastembed import TextEmbedding
+
+                log.info("embed.local.loading", model=self.model)
+                self._local_model = TextEmbedding(model_name=self.model)
+                log.info("embed.local.loaded", model=self.model)
+        return self._local_model
+
+    def _embed_local_sync(self, text: str) -> list[float]:
+        model = self._ensure_local_loaded_sync()
+        # `.embed(...)` returns a generator of numpy arrays
+        vecs = list(model.embed([text]))
+        return vecs[0].tolist()
+
+    async def _embed_local(self, text: str) -> list[float]:
+        return await asyncio.to_thread(self._embed_local_sync, text)
+
+    # ── OpenAI-compatible ────────────────────────────────────────
     async def _embed_openai(self, text: str) -> list[float]:
         url = f"{self.base_url}/embeddings"
         payload = {"model": self.model, "input": text}
@@ -90,12 +121,14 @@ class Embedder:
         last.raise_for_status()
         return []  # unreachable
 
+    # ── Ollama ───────────────────────────────────────────────────
     async def _embed_ollama(self, text: str) -> list[float]:
         url = f"{self.base_url}/api/embeddings"
         r = await self._client.post(url, json={"model": self.model, "prompt": text})
         r.raise_for_status()
         return r.json()["embedding"]
 
+    # ── health ───────────────────────────────────────────────────
     async def health(self) -> dict:
         try:
             v = await self.embed("vault zeta embedder health probe")
@@ -103,10 +136,10 @@ class Embedder:
                 "ok": True,
                 "provider": self.provider,
                 "model": self.model,
-                "base_url": self.base_url,
+                "base_url": self.base_url if self.provider != "local" else None,
                 "dim": int(v.shape[0]),
                 "dim_matches_config": int(v.shape[0]) == self.dim,
-                "key_pool": self.keys.status(),
+                "key_pool": self.keys.status() if self.provider == "openai" else None,
             }
         except Exception as e:
             return {
@@ -114,5 +147,4 @@ class Embedder:
                 "provider": self.provider,
                 "model": self.model,
                 "error": str(e),
-                "key_pool": self.keys.status(),
             }

@@ -33,12 +33,13 @@ class Settings(BaseSettings):
     llm_model: str = "llama-3.3-70b-versatile"
 
     # ── Embeddings ────────────────────────────────────────────────
-    # Default: Voyage AI free tier — OpenAI-compatible /embeddings endpoint.
-    embed_provider: str = "openai"
-    embed_base_url: str = "https://api.voyageai.com/v1"
+    # Default: local fastembed (ONNX, ~120MB, no API key, no rate limit).
+    # Switch provider to "openai" to use any OpenAI-compatible /v1/embeddings.
+    embed_provider: str = "local"
+    embed_base_url: str = ""
     embed_api_key: str = ""
-    embed_model: str = "voyage-3-lite"
-    embed_dim: int = 512
+    embed_model: str = "BAAI/bge-small-en-v1.5"
+    embed_dim: int = 384
     retrieval_k: int = 8
     recent_message_window: int = 12
 
