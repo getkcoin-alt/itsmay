@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "llama-3.3-70b-versatile"
+    # Max passes through the agentic tool loop per turn (tool call → result →
+    # re-ask). Caps how many times Scrappy can chain tools/experts in one reply.
+    tool_loop_max_iters: int = 4
 
     # ── Embeddings ────────────────────────────────────────────────
     # Default: local fastembed (ONNX, ~120MB, no API key, no rate limit).

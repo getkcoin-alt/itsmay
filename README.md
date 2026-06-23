@@ -167,14 +167,49 @@ Every turn:
 5. Compose: system persona → self-context → retrieved memories → recent → new turn.
 6. Stream the reply, persist with embedding on completion.
 
-`memories` is empty until you wire the consolidator. Drop facts/reflections in directly to test retrieval.
+The **Memory Keeper** expert now writes durable facts to `memories` via the
+`memory.save` tool (and recalls them with `memory.search`), so the store fills as
+you talk. Nightly auto-consolidation (critic/learner) is still future work; you
+can also drop facts/reflections in directly to test retrieval.
 
 ---
+
+## Agent architecture: orchestrator + experts
+
+Scrappy is an *orchestrator*. Each turn runs a multi-turn tool loop
+(`core/brain/agent_loop.py`): the model can call a tool, see the result, and keep
+going until it answers without calling one. Capped by `TOOL_LOOP_MAX_ITERS`.
+
+Two kinds of tools sit behind one merged toolbox (`core/brain/orchestrator.py`):
+
+- **Connectors** (`core/connectors/<name>/connector.py`) — raw capabilities.
+  Tools marked `executor="server"` run in-process (e.g. `memory.*`) and their
+  results are fed back to the model; `client_mac` tools are forwarded to the Mac
+  over SSE (fire-and-forget) and only offered on voice channels.
+- **Experts** (`core/agents/experts.py`) — specialist sub-agents Scrappy
+  delegates to via auto-generated `ask_<name>` tools. An expert has its own
+  persona, its own slice of connectors, and its own internal tool loop, and
+  hands back a synthesized answer. Current roster: **Memory Keeper** (owns
+  long-term memory via the `memory` connector) and **Strategist** (pure
+  reasoning, no tools).
+
+An expert is only offered once every connector it depends on is installed, so
+the roster self-assembles. Server tools and experts work on every channel; Mac
+control is added only on voice.
+
+### Add an expert
+1. If it needs tools, add a connector under `core/connectors/<ns>/connector.py`.
+2. Add a `SubAgentSpec` to `core/agents/experts.py` with its `tool_namespaces`.
+
+That's it — `ask_<name>` appears in Scrappy's toolbox automatically.
 
 ## What's next (per the architecture)
 
 1. ✓ Voice loop (Whisper + ElevenLabs) on the Mac agent
 2. ✓ Cloud deployment (Railway + Groq + OpenAI)
-3. Connector framework + first connector (Gmail)
-4. Goals/tasks + planner/executor agent
-5. Critic + Learner + nightly memory consolidation
+3. ✓ Connector framework + Mac control connector
+4. ✓ Multi-turn agentic tool loop + sub-agent (expert) framework
+5. ✓ Long-term memory tools (Memory Keeper expert)
+6. Gmail / Calendar connectors → email + calendar experts
+7. Goals/tasks + planner/executor expert
+8. Critic + Learner + nightly memory consolidation
