@@ -1,4 +1,11 @@
-"""Async Postgres pool with pgvector registration."""
+"""Async Postgres pool with pgvector registration.
+
+Order matters: `register_vector` introspects the `vector` type at connection
+init time, so the extension must exist in the database before any pooled
+connection opens. On a brand-new Railway Postgres the extension is installed
+but never enabled in our specific database — we bootstrap it here once before
+the pool comes up.
+"""
 
 from __future__ import annotations
 
@@ -17,10 +24,25 @@ async def _init_conn(conn: asyncpg.Connection) -> None:
     await register_vector(conn)
 
 
+async def _bootstrap_vector_extension(dsn: str) -> None:
+    """Run `CREATE EXTENSION IF NOT EXISTS vector;` on a throwaway connection.
+
+    Must run before the pool starts handing out connections, since the pool's
+    init callback assumes the `vector` type already exists.
+    """
+    conn = await asyncpg.connect(dsn=dsn)
+    try:
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        log.info("pg.vector_extension_ready")
+    finally:
+        await conn.close()
+
+
 async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         s = get_settings()
+        await _bootstrap_vector_extension(s.pg_dsn)
         _pool = await asyncpg.create_pool(
             dsn=s.pg_dsn,
             min_size=2,
