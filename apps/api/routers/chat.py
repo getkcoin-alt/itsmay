@@ -42,10 +42,15 @@ async def chat(
     settings = get_settings()
     user_id = await episodic.get_or_create_user(settings.user_handle)
 
-    if body.session_id is None:
-        session_id = await episodic.open_session(user_id, channel=body.channel)
-    else:
+    if body.session_id is not None and await episodic.session_exists(
+        body.session_id, user_id
+    ):
         session_id = body.session_id
+    else:
+        # Either no session_id given, or a stale one (e.g. client cache from a
+        # different deploy). Open a fresh one and the SSE 'session' event tells
+        # the client the new id so it can update its cache.
+        session_id = await episodic.open_session(user_id, channel=body.channel)
 
     # Embed the user turn once — used for storage AND retrieval.
     try:

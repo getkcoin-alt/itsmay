@@ -38,6 +38,19 @@ class EpisodicStore:
             )
             return row["id"]
 
+    async def session_exists(self, session_id: UUID, user_id: UUID) -> bool:
+        """True iff a session with this id belongs to this user. Clients can
+        cache session ids across deploys; this check lets the server recover
+        gracefully when the cached id is stale."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM sessions WHERE id = $1 AND user_id = $2",
+                session_id,
+                user_id,
+            )
+            return row is not None
+
     async def open_session(self, user_id: UUID, channel: str = "api") -> UUID:
         pool = await get_pool()
         async with pool.acquire() as conn:
