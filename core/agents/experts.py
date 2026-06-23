@@ -7,9 +7,10 @@ namespaces it depends on are installed, it automatically appears as an
 Current roster:
     - memory_keeper — owns long-term memory (needs the `memory` connector)
     - strategist    — pure-reasoning business/architecture advisor (no tools)
+    - email         — reads, drafts, and sends email (needs the `gmail` connector)
 
-Future experts slot in the same way, e.g. an email expert over a `gmail`
-connector, a calendar expert over `gcal`, a researcher over a `web` connector.
+Future experts slot in the same way, e.g. a calendar expert over `gcal`,
+a researcher over a `web` connector.
 """
 
 from __future__ import annotations
@@ -74,5 +75,33 @@ STRATEGIST = SubAgentSpec(
     max_iters=1,
 )
 
+EMAIL = SubAgentSpec(
+    name="email",
+    title="Email",
+    expertise=(
+        "Gmail: reading, summarising, drafting, and sending email on Karnveer's "
+        "behalf. Use it to check the inbox, summarise a thread, compose a reply, "
+        "or send a message."
+    ),
+    system_prompt=(
+        "You are the Email expert for Scrappy Singh, managing Karnveer's Gmail.\n\n"
+        "How you operate:\n"
+        "- READ first: when asked about email, call `gmail.search` with a tight query "
+        "then `gmail.read_thread` on relevant threads. Report the key points clearly: "
+        "sender, subject, date, what action is needed.\n"
+        "- DRAFT by default: when asked to write or reply to an email, call "
+        "`gmail.draft` and confirm the draft_id. Never call `gmail.send` unless "
+        "Karnveer explicitly says 'send it' or 'send now'.\n"
+        "- SEND only on explicit instruction. It is irreversible. Confirm what you "
+        "sent (to, subject) in your reply.\n"
+        "- Keep replies short and factual. No filler, no 'Certainly!'.\n"
+        "- When summarising threads, lead with the action item / decision needed, "
+        "then context. Skip pleasantries in summaries."
+    ),
+    tool_namespaces=("gmail",),
+    temperature=0.2,
+    max_iters=6,
+)
+
 # The full roster. The registry filters this down to what's actually wired.
-ALL_EXPERTS: tuple[SubAgentSpec, ...] = (MEMORY_KEEPER, STRATEGIST)
+ALL_EXPERTS: tuple[SubAgentSpec, ...] = (MEMORY_KEEPER, STRATEGIST, EMAIL)

@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     mission_target_date: date = date(2026, 11, 23)
     mission_statement: str = "Achieve financial freedom"
 
+    # ── Gmail connector ───────────────────────────────────────────
+    # JSON blob from scripts/gmail_auth.py. If unset, the Gmail connector
+    # and Email expert are silently absent from the toolbox.
+    google_credentials_json: str = ""
+
     # ── Mac agent ─────────────────────────────────────────────────
     vault_api_base: str = "http://127.0.0.1:8000"
 
