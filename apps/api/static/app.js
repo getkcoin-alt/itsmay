@@ -145,7 +145,7 @@ function renderMarkdown(raw) {
 }
 
 // ── tabs ──────────────────────────────────────────────────────────
-const loaded = { memory: false, system: false, watch: false };
+const loaded = { memory: false, system: false, watch: false, agents: false };
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
@@ -156,6 +156,8 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (name === "memory" && !loaded.memory) { loadMemory(); loaded.memory = true; }
     if (name === "system" && !loaded.system) { loadSystem(); loaded.system = true; }
     if (name === "watch")                    { loadWatch(); }
+    if (name === "agents")                   { clearAgentsTimer(); loadAgents(); }
+    if (name !== "agents")                   { clearAgentsTimer(); }
   });
 });
 
@@ -557,6 +559,115 @@ $("#watch-prompt-input").addEventListener("keydown", (e) => {
     e.preventDefault();
     $("#watch-send-btn").click();
   }
+});
+
+// ── agents tab ────────────────────────────────────────────────────
+let _agentsTimer = null;
+const _expandedAgents = new Set();
+
+function clearAgentsTimer() {
+  if (_agentsTimer) { clearTimeout(_agentsTimer); _agentsTimer = null; }
+}
+
+async function loadAgents() {
+  const list = $("#agents-list");
+  try {
+    const agents = await apiJson("/v1/agents");
+    list.innerHTML = "";
+    if (!agents.length) {
+      list.appendChild(el("div", "muted agents-empty",
+        "No agents yet. Ask Scrappy to do something that requires terminal work."));
+      return;
+    }
+    agents.forEach((a) => list.appendChild(buildAgentCard(a)));
+    const hasActive = agents.some((a) => a.status === "pending" || a.status === "running");
+    if (hasActive) {
+      _agentsTimer = setTimeout(() => loadAgents(), 3000);
+    }
+  } catch (e) {
+    list.innerHTML = "";
+    list.appendChild(el("div", "muted agents-empty", "Failed to load: " + e.message));
+  }
+}
+
+function buildAgentCard(a) {
+  const card = el("div", "agent-card");
+  card.dataset.id = a.id;
+
+  const head = el("div", "agent-card-head");
+  head.appendChild(el("span", "agent-id", a.id));
+  head.appendChild(el("span", `badge-pill status-${a.status}`, a.status));
+  head.appendChild(el("span", "agent-task", a.task));
+  head.appendChild(el("span", "agent-time", timeAgo(new Date(a.created_at))));
+  card.appendChild(head);
+
+  if (_expandedAgents.has(a.id)) {
+    fetchAndRenderDetail(card, a.id);
+  }
+
+  head.addEventListener("click", () => {
+    if (_expandedAgents.has(a.id)) {
+      _expandedAgents.delete(a.id);
+      while (card.children.length > 1) card.removeChild(card.lastChild);
+    } else {
+      _expandedAgents.add(a.id);
+      fetchAndRenderDetail(card, a.id);
+    }
+  });
+
+  return card;
+}
+
+async function fetchAndRenderDetail(card, agentId) {
+  // Remove old detail if any.
+  while (card.children.length > 1) card.removeChild(card.lastChild);
+  const placeholder = el("div", "agent-log");
+  placeholder.appendChild(el("div", "muted", "Loading…"));
+  card.appendChild(placeholder);
+
+  try {
+    const a = await apiJson(`/v1/agents/${agentId}`);
+    while (card.children.length > 1) card.removeChild(card.lastChild);
+    renderAgentDetail(card, a);
+
+    if ((a.status === "pending" || a.status === "running") && _expandedAgents.has(agentId)) {
+      setTimeout(() => {
+        if (_expandedAgents.has(agentId)) fetchAndRenderDetail(card, agentId);
+      }, 2000);
+    }
+  } catch (e) {
+    while (card.children.length > 1) card.removeChild(card.lastChild);
+    const err = el("div", "agent-log");
+    err.appendChild(el("div", "muted", "Error: " + e.message));
+    card.appendChild(err);
+  }
+}
+
+function renderAgentDetail(card, a) {
+  if (a.log && a.log.length) {
+    const logDiv = el("div", "agent-log");
+    a.log.forEach((entry) => {
+      const row = el("div", "log-entry");
+      const kind = el("span", `log-kind ${entry.kind}`, entry.kind);
+      row.appendChild(kind);
+      const txt = el("div", `log-text ${entry.kind}`);
+      txt.textContent = entry.text;
+      row.appendChild(txt);
+      logDiv.appendChild(row);
+    });
+    card.appendChild(logDiv);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+  if (a.result && (a.status === "done" || a.status === "error")) {
+    const bar = el("div", "agent-result-bar");
+    bar.textContent = a.result;
+    card.appendChild(bar);
+  }
+}
+
+$("#agents-refresh").addEventListener("click", () => {
+  clearAgentsTimer();
+  loadAgents();
 });
 
 // ── system ────────────────────────────────────────────────────────
