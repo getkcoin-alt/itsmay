@@ -713,6 +713,7 @@ input[type=range] { accent-color: var(--accent); }
 .mono { font-family: var(--mono); }
 .dim  { color: var(--text-dim); }
 .muted { color: var(--text-muted); }
+.empty-hint { padding: 1.5rem 1rem; text-align: center; font-size: 0.82rem; color: var(--text-muted); }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
