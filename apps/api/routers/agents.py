@@ -22,3 +22,13 @@ async def get_agent(agent_id: str) -> dict:
     if not agent:
         raise HTTPException(status_code=404, detail=f"no agent {agent_id!r}")
     return agent.to_dict(full=True)
+
+
+@router.delete("/{agent_id}")
+async def cancel_agent(agent_id: str) -> dict:
+    """Cancel a running terminal agent."""
+    agent = get_agent_store().get(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"no agent {agent_id!r}")
+    cancelled = agent.cancel()
+    return {"cancelled": cancelled, "status": agent.status}

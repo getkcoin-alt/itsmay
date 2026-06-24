@@ -4,267 +4,327 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>Vault Zeta · Scrappy</title>
+  <title>Scrappy · Vault Zeta</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <!-- ── Top bar ─────────────────────────────────────────────── -->
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">⚡</span>
-      <div class="brand-text">
-        <strong>Scrappy Singh</strong>
-        <span class="brand-sub">Vault Zeta Node SSN-92C</span>
+
+  <!-- ── Sidebar ───────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-avatar">⚡</div>
+      <div class="brand-info">
+        <span class="brand-name">Scrappy Singh</span>
+        <span class="brand-node">Vault Zeta · SSN-92C</span>
       </div>
     </div>
 
-    <div id="mission" class="mission" hidden>
-      <div class="mission-item">
-        <span class="label">Mission</span>
-        <span id="mission-text" class="value">—</span>
-      </div>
-      <div class="mission-item">
-        <span class="label">Countdown</span>
-        <span id="mission-days" class="value accent">—</span>
-      </div>
-      <div class="mission-item">
-        <span class="label">Model</span>
-        <span id="mission-model" class="value mono">—</span>
-      </div>
+    <nav class="sidebar-nav" role="navigation">
+      <button class="nav-item active" data-tab="chat">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M14 10.5a1 1 0 0 1-1 1H5l-3 3V2a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1z"/>
+        </svg>
+        <span>Chat</span>
+      </button>
+      <button class="nav-item" data-tab="memory">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <ellipse cx="8" cy="5" rx="6" ry="3.5"/>
+          <path d="M2 5v3c0 1.93 2.69 3.5 6 3.5s6-1.57 6-3.5V5"/>
+          <path d="M2 8v3c0 1.93 2.69 3.5 6 3.5s6-1.57 6-3.5V8"/>
+        </svg>
+        <span>Memory</span>
+      </button>
+      <button class="nav-item" data-tab="watch">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/>
+          <circle cx="8" cy="8" r="2"/>
+        </svg>
+        <span>Watch</span>
+      </button>
+      <button class="nav-item" data-tab="agents">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="1" y="3" width="14" height="10" rx="1.5"/>
+          <path d="M4 7h2M4 9.5h5M4 12h3"/>
+        </svg>
+        <span>Agents</span>
+        <span id="agents-badge" class="nav-badge" hidden>0</span>
+      </button>
+      <button class="nav-item" data-tab="system">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="8" cy="8" r="2.5"/>
+          <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.22 3.22l1.41 1.41M11.37 11.37l1.41 1.41M3.22 12.78l1.41-1.41M11.37 4.63l1.41-1.41"/>
+        </svg>
+        <span>System</span>
+      </button>
+      <button class="nav-item" data-tab="guide">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="8" cy="8" r="6.5"/>
+          <path d="M8 11V8M8 5.5v-.01"/>
+        </svg>
+        <span>Guide</span>
+      </button>
+    </nav>
+
+    <div id="mission" class="sidebar-mission" hidden>
+      <div class="mission-row"><span class="mk">Mission</span><span id="mission-text" class="mv">—</span></div>
+      <div class="mission-row"><span class="mk">T-minus</span><span id="mission-days" class="mv accent">—</span></div>
+      <div class="mission-row"><span class="mk">Model</span><span id="mission-model" class="mv mono">—</span></div>
     </div>
 
-    <div class="conn">
-      <span id="conn-dot" class="dot dot-idle" title="connection"></span>
-      <button id="settings-btn" class="icon-btn" title="API key / settings">⚙</button>
+    <div class="sidebar-footer">
+      <div class="conn-row">
+        <span id="conn-dot" class="dot dot-idle"></span>
+        <span id="conn-label" class="conn-label">connecting…</span>
+      </div>
+      <button id="settings-btn" class="nav-item settings-nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="8" cy="8" r="2"/>
+          <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M2.93 2.93l1.06 1.06M12.01 12.01l1.06 1.06M2.93 13.07l1.06-1.06M12.01 3.99l1.06-1.06"/>
+        </svg>
+        <span>API Key</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Mobile top bar ─────────────────────────────────────────── -->
+  <header class="mobile-bar">
+    <div class="brand-avatar sm">⚡</div>
+    <span class="mobile-title">Scrappy</span>
+    <div class="mobile-right">
+      <span id="conn-dot-m" class="dot dot-idle"></span>
+      <button id="settings-btn-m" class="icon-btn">⚙</button>
     </div>
   </header>
 
-  <!-- ── Tabs ────────────────────────────────────────────────── -->
-  <nav class="tabs">
-    <button class="tab active" data-tab="chat">Chat</button>
-    <button class="tab" data-tab="memory">Memory</button>
-    <button class="tab" data-tab="watch">Watch</button>
-    <button class="tab" data-tab="agents">Agents</button>
-    <button class="tab" data-tab="system">System</button>
-    <button class="tab" data-tab="guide">Guide</button>
-  </nav>
+  <!-- ── Main content ───────────────────────────────────────────── -->
+  <main class="main-content">
 
-  <main>
-    <!-- ── Chat ──────────────────────────────────────────────── -->
+    <!-- Chat ──────────────────────────────────────────────────── -->
     <section id="panel-chat" class="panel active">
+      <div class="panel-header">
+        <span class="panel-title">Chat</span>
+        <button id="chat-new" class="btn-ghost sm">＋ New session</button>
+      </div>
       <div id="chat-log" class="chat-log">
-        <div class="empty-hint">
-          Talk to Scrappy. He'll delegate to experts and use tools as needed —
-          you'll see those steps inline.
+        <div class="empty-state">
+          <div class="empty-icon">⚡</div>
+          <div class="empty-title">Scrappy is ready</div>
+          <div class="empty-body">Talk in plain language. He'll call tools, delegate to experts, and spawn terminal workers — all visible inline.</div>
         </div>
       </div>
-      <form id="chat-form" class="chat-form">
-        <textarea id="chat-input" rows="1" placeholder="Message Scrappy…  (Enter to send, Shift+Enter for newline)"></textarea>
-        <button type="submit" id="chat-send">Send</button>
-        <button type="button" id="chat-new" class="ghost" title="Start a fresh session">New</button>
-      </form>
-    </section>
-
-    <!-- ── Memory ────────────────────────────────────────────── -->
-    <section id="panel-memory" class="panel">
-      <div class="mem-toolbar">
-        <form id="mem-search-form" class="mem-search">
-          <input id="mem-search-input" type="text" placeholder="Search memory by meaning…" />
-          <button type="submit">Search</button>
-          <button type="button" id="mem-refresh" class="ghost">Recent</button>
+      <div class="chat-composer">
+        <form id="chat-form" class="chat-form">
+          <textarea id="chat-input" rows="1" placeholder="Message Scrappy…"></textarea>
+          <button type="submit" id="chat-send" class="send-btn" title="Send (Enter)">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 12V4M4 8l4-4 4 4"/>
+            </svg>
+          </button>
         </form>
-        <button type="button" id="mem-add-toggle" class="ghost">+ Add memory</button>
-      </div>
-
-      <form id="mem-add-form" class="mem-add" hidden>
-        <textarea id="mem-add-content" rows="2" placeholder="A durable, self-contained fact to remember…"></textarea>
-        <div class="mem-add-row">
-          <label>Kind
-            <select id="mem-add-kind">
-              <option value="factual">factual</option>
-              <option value="semantic">semantic</option>
-              <option value="procedural">procedural</option>
-              <option value="reflection">reflection</option>
-              <option value="episodic">episodic</option>
-            </select>
-          </label>
-          <label>Importance
-            <input id="mem-add-importance" type="range" min="0" max="1" step="0.05" value="0.6" />
-            <span id="mem-add-importance-val" class="mono">0.60</span>
-          </label>
-          <button type="submit">Save</button>
-          <button type="button" id="mem-add-cancel" class="ghost">Cancel</button>
-        </div>
-      </form>
-
-      <div id="mem-meta" class="mem-meta"></div>
-      <div id="mem-list" class="mem-list"></div>
-      <div id="mem-load-more" class="mem-load-more" hidden>
-        <button type="button" id="mem-more-btn" class="ghost">Load more</button>
+        <div class="composer-hint">Enter to send · Shift+Enter for newline</div>
       </div>
     </section>
 
-    <!-- ── Watch ─────────────────────────────────────────────── -->
+    <!-- Memory ─────────────────────────────────────────────────── -->
+    <section id="panel-memory" class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Memory</span>
+        <button id="mem-add-toggle" class="btn-ghost sm">＋ Add</button>
+      </div>
+      <div class="panel-body">
+        <form id="mem-add-form" class="add-card" hidden>
+          <textarea id="mem-add-content" rows="3" placeholder="A durable, self-contained fact to remember…"></textarea>
+          <div class="add-card-row">
+            <label class="field-label">Kind
+              <select id="mem-add-kind">
+                <option value="factual">factual</option>
+                <option value="semantic">semantic</option>
+                <option value="procedural">procedural</option>
+                <option value="reflection">reflection</option>
+                <option value="episodic">episodic</option>
+              </select>
+            </label>
+            <label class="field-label">Importance
+              <div class="range-row">
+                <input id="mem-add-importance" type="range" min="0" max="1" step="0.05" value="0.6" />
+                <span id="mem-add-importance-val" class="mono dim">0.60</span>
+              </div>
+            </label>
+            <div class="add-card-actions">
+              <button type="submit">Save memory</button>
+              <button type="button" id="mem-add-cancel" class="btn-ghost">Cancel</button>
+            </div>
+          </div>
+        </form>
+
+        <div class="search-row">
+          <form id="mem-search-form" class="search-form">
+            <div class="search-input-wrap">
+              <svg class="search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="6.5" cy="6.5" r="4.5"/><path d="M10.5 10.5l3 3"/>
+              </svg>
+              <input id="mem-search-input" type="text" placeholder="Search memory by meaning…" class="search-input" />
+            </div>
+            <button type="submit" class="btn-ghost sm">Search</button>
+            <button type="button" id="mem-refresh" class="btn-ghost sm">Recent</button>
+          </form>
+        </div>
+
+        <div id="mem-meta" class="section-meta"></div>
+        <div id="mem-list" class="mem-list"></div>
+        <div id="mem-load-more" class="load-more-row" hidden>
+          <button type="button" id="mem-more-btn" class="btn-ghost">Load more</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Watch ──────────────────────────────────────────────────── -->
     <section id="panel-watch" class="panel">
-      <div class="watch-header">
-        <div>
-          <h2 class="watch-title">Browser Watch</h2>
-          <p class="watch-sub muted">Scrappy monitors Chrome tabs for changes and reports them here.</p>
-        </div>
-        <button id="watch-refresh" class="ghost">Refresh</button>
+      <div class="panel-header">
+        <span class="panel-title">Browser Watch</span>
+        <button id="watch-refresh" class="btn-ghost sm">Refresh</button>
       </div>
-
-      <div class="watch-start-box card">
-        <h3>Start watching a tab</h3>
-        <p class="muted">Type what you want Scrappy to monitor, then send it as a chat message.</p>
-        <div class="watch-form-row">
-          <input id="watch-prompt-input" type="text"
-            placeholder="e.g. keep an eye on my Stripe dashboard tab" />
-          <button id="watch-send-btn">Ask Scrappy</button>
+      <div class="panel-body">
+        <div class="info-card">
+          <div class="info-card-label">Monitor a Chrome tab</div>
+          <div class="watch-input-row">
+            <input id="watch-prompt-input" type="text" placeholder="e.g. keep an eye on my Stripe dashboard" />
+            <button id="watch-send-btn">Ask Scrappy</button>
+          </div>
+          <p class="helper-text">Scrappy lists your open Chrome tabs, you pick one, he monitors it every 2 minutes. No extension needed.</p>
         </div>
-        <p class="muted" style="margin-top: 0.5rem; font-size:0.78rem;">
-          Scrappy will list your open Chrome tabs, you pick one, and he'll start monitoring it every 2 minutes.
-        </p>
-      </div>
 
-      <div id="watch-status-area">
-        <div class="watch-section-label">Recent changes</div>
-        <div id="watch-events" class="watch-events">
-          <div class="muted watch-empty">No tab events yet. Start watching a tab above.</div>
+        <div class="section-label">Recent changes</div>
+        <div id="watch-events" class="event-list">
+          <div class="empty-feed-msg">No tab events yet. Start watching a tab above.</div>
         </div>
       </div>
     </section>
 
-
-    <!-- ── Agents ────────────────────────────────────────────── -->
+    <!-- Agents ─────────────────────────────────────────────────── -->
     <section id="panel-agents" class="panel">
-      <div class="agents-header">
-        <div>
-          <h2 class="agents-title">Terminal Agents</h2>
-          <p class="muted" style="margin:0;font-size:0.85rem">Claude workers Scrappy spawns to run bash commands autonomously.</p>
+      <div class="panel-header">
+        <div class="header-left">
+          <span class="panel-title">Terminal Agents</span>
+          <span class="header-sub">Claude workers Scrappy spawns to run bash commands autonomously</span>
         </div>
-        <button id="agents-refresh" class="ghost">Refresh</button>
+        <button id="agents-refresh" class="btn-ghost sm">Refresh</button>
       </div>
-      <div id="agents-list" class="agents-list">
-        <div class="muted agents-empty">No agents yet. Ask Scrappy to complete a task that needs terminal work.</div>
+      <div class="panel-body">
+        <div id="agents-list" class="agents-list">
+          <div class="empty-state sm">
+            <div class="empty-icon">⬡</div>
+            <div class="empty-title">No agents yet</div>
+            <div class="empty-body">Ask Scrappy to complete a task that needs code execution or file work — he'll spawn workers automatically.</div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <!-- ── System ────────────────────────────────────────────── -->
+    <!-- System ─────────────────────────────────────────────────── -->
     <section id="panel-system" class="panel">
-      <div class="sys-grid">
-        <div class="card">
-          <h3>Health</h3>
-          <div id="sys-health" class="kv">—</div>
-        </div>
-        <div class="card">
-          <h3>Experts</h3>
-          <div id="sys-experts" class="stack">—</div>
-        </div>
-        <div class="card wide">
-          <h3>Connectors</h3>
-          <div id="sys-connectors" class="stack">—</div>
+      <div class="panel-header">
+        <span class="panel-title">System</span>
+        <button id="sys-refresh" class="btn-ghost sm">Refresh</button>
+      </div>
+      <div class="panel-body">
+        <div class="sys-grid">
+          <div class="sys-card">
+            <div class="sys-card-title">Health</div>
+            <div id="sys-health" class="kv-list">—</div>
+          </div>
+          <div class="sys-card">
+            <div class="sys-card-title">Experts</div>
+            <div id="sys-experts" class="unit-stack">—</div>
+          </div>
+          <div class="sys-card span2">
+            <div class="sys-card-title">Connectors</div>
+            <div id="sys-connectors" class="unit-stack">—</div>
+          </div>
         </div>
       </div>
-      <button id="sys-refresh" class="ghost">Refresh</button>
     </section>
 
-    <!-- ── Guide ─────────────────────────────────────────────── -->
-    <section id="panel-guide" class="panel guide">
-      <h2>How to use Scrappy</h2>
-      <p>
-        Scrappy is an <strong>orchestrator</strong>. You talk to him in plain
-        language; under the hood he runs a multi-turn loop where he can call
-        tools, hand work to specialist <em>experts</em>, read the result, and
-        keep going until he can answer. You don't manage any of that — you just
-        ask.
-      </p>
+    <!-- Guide ──────────────────────────────────────────────────── -->
+    <section id="panel-guide" class="panel guide-panel">
+      <div class="panel-header">
+        <span class="panel-title">Guide</span>
+      </div>
+      <div class="guide-body">
+        <h2>How to use Scrappy</h2>
+        <p>Scrappy is an <strong>orchestrator</strong>. You talk in plain language; he runs a multi-turn loop — calling tools, delegating to experts, spawning terminal workers — until he has an answer. You don't manage any of that.</p>
 
-      <h3>The crew (experts)</h3>
-      <ul>
-        <li><strong>Memory Keeper</strong> — remembers durable facts and recalls
-          them later. Say <em>"remember that I use Stripe for payouts"</em> or
-          <em>"what do you know about my payment setup?"</em></li>
-        <li><strong>Strategist</strong> — high-leverage business / architecture
-          calls. Say <em>"should I build the API or the UI first?"</em> — it ranks
-          and picks, no fence-sitting.</li>
-        <li><strong>Email</strong> — reads, summarises, drafts, and sends Gmail
-          (only when the Gmail connector is wired). It <em>drafts by default</em>
-          and only sends when you explicitly say "send it".</li>
-      </ul>
-      <p class="muted">
-        An expert only appears once the connectors it needs are installed — check
-        the <strong>System</strong> tab to see who's live right now.
-      </p>
+        <h3>Experts</h3>
+        <ul>
+          <li><strong>Memory Keeper</strong> — saves and recalls durable facts. <em>"Remember I use Stripe for payouts"</em> or <em>"What do you know about my stack?"</em></li>
+          <li><strong>Strategist</strong> — high-leverage business / architecture calls. Picks and ranks, no fence-sitting.</li>
+          <li><strong>Email</strong> — reads, summarises, drafts, sends Gmail (needs Gmail connector). Drafts by default — only sends when you say "send it".</li>
+        </ul>
 
-      <h3>Memory</h3>
-      <p>
-        Every conversation is embedded and stored; relevant bits are pulled back
-        automatically on future turns. The <strong>Memory</strong> tab lets you
-        browse what's stored, search it by meaning, hand-add a fact, or delete
-        something. Importance (0–1) biases what gets recalled — identity/goals
-        high, trivia low.
-      </p>
+        <h3>Terminal Agents</h3>
+        <p>Scrappy can spawn autonomous Claude workers with bash access. Just describe the outcome:</p>
+        <ul>
+          <li><em>"Write a Python CSV-to-JSON converter and run it"</em> → one agent</li>
+          <li><em>"Do these three things in parallel"</em> → three agents simultaneously</li>
+          <li><em>"Build it, test it, fix any errors"</em> → Scrappy chains agents on the results</li>
+        </ul>
+        <p>Watch live in the <strong>Agents</strong> tab — every command and output is logged.</p>
 
-      <h3>Browser Watch</h3>
-      <p>
-        Scrappy can monitor any open Chrome tab for changes. When the content
-        changes, he analyses the diff, sends you a macOS notification, and logs
-        the summary in the <strong>Watch</strong> tab here.
-      </p>
-      <ul>
-        <li>Go to the <strong>Watch</strong> tab and type what you want him to
-          monitor — e.g. <em>"keep an eye on my Stripe dashboard"</em>.</li>
-        <li>Scrappy lists your open tabs, you pick one, and the watcher starts
-          (every 2 minutes by default).</li>
-        <li>Or say it in the <strong>Voice</strong> loop — same flow.</li>
-        <li>To stop: say <em>"stop watching"</em> in Chat or Voice.</li>
-      </ul>
-      <p class="muted">
-        The watcher runs locally on your Mac via the voice agent
-        (<code>python -m apps.mac_agent.voice_loop</code>). It needs Chrome
-        open — no extension required.
-      </p>
+        <h3>Memory</h3>
+        <p>Every conversation is embedded and stored; relevant bits are recalled automatically on future turns. Browse, search by meaning, add, or delete in the <strong>Memory</strong> tab. Importance (0–1) biases recall — identity/goals high, trivia low.</p>
 
-      <h3>Voice vs. web</h3>
-      <p>
-        This console talks over the same brain as the Mac push-to-talk client.
-        Mac-control tools (open apps, notify, speak, browser watch) only show up
-        on the voice channel — here you get chat, memory, browser watch shortcuts,
-        and expert delegation.
-      </p>
+        <h3>Browser Watch</h3>
+        <p>Scrappy monitors Chrome tabs for changes via AppleScript — no extension required. In the <strong>Watch</strong> tab, describe what to monitor; he lists your tabs, you pick one, the watcher runs every 2 minutes and reports here. Runs via the Mac voice agent (<code>python -m apps.mac_agent.voice_loop</code>).</p>
 
-      <h3>Tips</h3>
-      <ul>
-        <li>Give context in one message — experts can't see the whole thread, so
-          Scrappy hands them a self-contained task.</li>
-        <li>Hit <strong>New</strong> in Chat to start a clean session.</li>
-        <li>Watching the inline <span class="chip chip-demo">→ tool</span> /
-          <span class="chip chip-demo">✓ result</span> chips tells you exactly
-          what Scrappy did to answer.</li>
-        <li>The <strong>System</strong> tab shows which connectors and experts are
-          live — if an expert is missing, it means its connector isn't installed.</li>
-      </ul>
+        <h3>Tips</h3>
+        <ul>
+          <li>One complete message beats a chain of fragments — experts get a self-contained task brief, not the full thread.</li>
+          <li>The inline <span class="chip-demo">→ tool</span> / <span class="chip-demo">✓ result</span> chips show exactly what Scrappy did.</li>
+          <li><strong>New session</strong> in Chat clears context. Use it when switching topics.</li>
+          <li>The <strong>System</strong> tab shows which connectors and experts are live.</li>
+        </ul>
+      </div>
     </section>
+
   </main>
 
-  <!-- ── Settings / key modal ──────────────────────────────────── -->
+  <!-- ── Mobile nav ─────────────────────────────────────────────── -->
+  <nav class="mobile-nav" role="navigation">
+    <button class="mnav-item active" data-tab="chat">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 10.5a1 1 0 0 1-1 1H5l-3 3V2a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1z"/></svg>
+      <span>Chat</span>
+    </button>
+    <button class="mnav-item" data-tab="memory">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="8" cy="5" rx="6" ry="3.5"/><path d="M2 5v3c0 1.93 2.69 3.5 6 3.5s6-1.57 6-3.5V5"/><path d="M2 8v3c0 1.93 2.69 3.5 6 3.5s6-1.57 6-3.5V8"/></svg>
+      <span>Memory</span>
+    </button>
+    <button class="mnav-item" data-tab="agents">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M4 7h2M4 9.5h5"/></svg>
+      <span>Agents</span>
+    </button>
+    <button class="mnav-item" data-tab="system">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/></svg>
+      <span>System</span>
+    </button>
+  </nav>
+
+  <!-- ── Settings modal ─────────────────────────────────────────── -->
   <div id="modal" class="modal" hidden>
     <div class="modal-box">
-      <h3>API key</h3>
-      <p class="muted">
-        Stored only in this browser (localStorage). Sent as
-        <code>Authorization: Bearer …</code> on every request. Leave blank if the
-        server runs in open mode.
-      </p>
-      <input id="key-input" type="password" placeholder="VAULT_API_KEY" />
-      <div class="modal-actions">
-        <button id="key-save">Save</button>
-        <button id="key-clear" class="ghost">Clear</button>
-        <button id="key-close" class="ghost">Close</button>
+      <div class="modal-head">
+        <h3>API Key</h3>
+        <button id="key-close" class="icon-btn" aria-label="Close">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M2 2l12 12M14 2L2 14"/></svg>
+        </button>
       </div>
-      <div id="key-status" class="muted"></div>
+      <p class="helper-text">Stored in <code>localStorage</code>. Sent as <code>Authorization: Bearer …</code>. Leave blank for open mode.</p>
+      <input id="key-input" type="password" placeholder="VAULT_API_KEY" class="text-field" />
+      <div class="modal-actions">
+        <button id="key-save">Save key</button>
+        <button id="key-clear" class="btn-ghost">Clear</button>
+      </div>
+      <div id="key-status" class="helper-text"></div>
     </div>
   </div>
 

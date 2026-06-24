@@ -109,6 +109,17 @@ class TerminalAgent:
             self._run(llm), name=f"agent-{self.id}"
         )
 
+    def cancel(self) -> bool:
+        """Cancel a running agent. Returns True if it was running and got cancelled."""
+        if self._asyncio_task and not self._asyncio_task.done():
+            self._asyncio_task.cancel()
+            self.status = "error"
+            self.result = "Cancelled by user"
+            self.finished_at = datetime.now(UTC).isoformat()
+            self._add_log("error", "Cancelled by user")
+            return True
+        return False
+
     async def _run(self, llm: LLMClient) -> None:
         self.status = "running"
         os.makedirs(self.work_dir, exist_ok=True)
