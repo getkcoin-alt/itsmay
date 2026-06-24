@@ -257,6 +257,75 @@ select {
 .watch-event-time { font-size: 0.72rem; color: var(--muted); flex-shrink: 0; font-family: var(--mono); }
 .watch-event-summary { color: var(--text); line-height: 1.55; font-size: 0.88rem; }
 
+/* ── agents tab ─────────────────────────────────────────── */
+#panel-agents { padding: 1.25rem; max-width: 900px; width: 100%; margin: 0 auto; gap: 1rem; }
+.agents-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+.agents-title { margin: 0 0 0.15rem; font-size: 1.15rem; }
+.agents-list { display: flex; flex-direction: column; gap: 0.6rem; padding-bottom: 2rem; }
+.agents-empty { padding: 1.5rem 0; font-size: 0.88rem; }
+
+.agent-card {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden;
+}
+.agent-card-head {
+  display: flex; align-items: center; gap: 0.6rem; padding: 0.7rem 1rem;
+  cursor: pointer; user-select: none;
+}
+.agent-card-head:hover { background: var(--bg-elev2); }
+.agent-id {
+  font-family: var(--mono); font-size: 0.7rem; padding: 0.1rem 0.4rem;
+  border-radius: 5px; background: var(--bg-elev2); border: 1px solid var(--border);
+  color: var(--muted); flex-shrink: 0;
+}
+.agent-task {
+  flex: 1; min-width: 0; font-size: 0.88rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.agent-time { font-size: 0.7rem; color: var(--muted); font-family: var(--mono); flex-shrink: 0; }
+
+.status-pending { background: #3a3520; color: var(--warn); }
+.status-running { background: #1c3040; color: #60c0ff; animation: pulse 1.5s ease-in-out infinite; }
+.status-done    { background: var(--accent-dim); color: #d6ffe9; }
+.status-error   { background: #2d1a1a; color: var(--danger); }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.6; } }
+
+.agent-log {
+  border-top: 1px solid var(--border); padding: 0.6rem 1rem;
+  display: flex; flex-direction: column; gap: 0.35rem;
+  max-height: 480px; overflow-y: auto;
+}
+.log-entry { display: flex; gap: 0.5rem; align-items: flex-start; font-size: 0.8rem; }
+.log-kind {
+  font-family: var(--mono); font-size: 0.65rem; flex-shrink: 0;
+  padding: 0.1rem 0.35rem; border-radius: 4px; margin-top: 0.1rem; line-height: 1.4;
+}
+.log-kind.thought { background: #1d2535; color: #8ba0c0; }
+.log-kind.cmd     { background: #1c3040; color: #60c0ff; }
+.log-kind.output  { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+.log-kind.result  { background: var(--accent-dim); color: #d6ffe9; }
+.log-kind.error   { background: #2d1a1a; color: var(--danger); }
+.log-text {
+  flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-all;
+  font-family: var(--mono); line-height: 1.45; color: var(--text);
+}
+.log-text.thought {
+  font-family: var(--sans); color: var(--muted); font-style: italic;
+  word-break: normal; line-height: 1.55;
+}
+.log-text.result {
+  font-family: var(--sans); color: var(--text); font-weight: 500;
+  word-break: normal; line-height: 1.55;
+}
+.agent-result-bar {
+  padding: 0.55rem 1rem; border-top: 1px solid var(--border);
+  font-size: 0.83rem; color: var(--accent); background: var(--bg-elev2);
+  white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+}
+
 /* ── system ─────────────────────────────────────────────── */
 #panel-system { padding: 1rem; max-width: 960px; width: 100%; margin: 0 auto; }
 .sys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; margin-bottom: 1rem; }

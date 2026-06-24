@@ -45,6 +45,7 @@
     <button class="tab active" data-tab="chat">Chat</button>
     <button class="tab" data-tab="memory">Memory</button>
     <button class="tab" data-tab="watch">Watch</button>
+    <button class="tab" data-tab="agents">Agents</button>
     <button class="tab" data-tab="system">System</button>
     <button class="tab" data-tab="guide">Guide</button>
   </nav>
@@ -132,6 +133,21 @@
         <div id="watch-events" class="watch-events">
           <div class="muted watch-empty">No tab events yet. Start watching a tab above.</div>
         </div>
+      </div>
+    </section>
+
+
+    <!-- ── Agents ────────────────────────────────────────────── -->
+    <section id="panel-agents" class="panel">
+      <div class="agents-header">
+        <div>
+          <h2 class="agents-title">Terminal Agents</h2>
+          <p class="muted" style="margin:0;font-size:0.85rem">Claude workers Scrappy spawns to run bash commands autonomously.</p>
+        </div>
+        <button id="agents-refresh" class="ghost">Refresh</button>
+      </div>
+      <div id="agents-list" class="agents-list">
+        <div class="muted agents-empty">No agents yet. Ask Scrappy to complete a task that needs terminal work.</div>
       </div>
     </section>
 
