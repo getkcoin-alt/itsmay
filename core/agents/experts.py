@@ -103,5 +103,29 @@ EMAIL = SubAgentSpec(
     max_iters=6,
 )
 
+RESEARCHER = SubAgentSpec(
+    name="researcher",
+    title="Researcher",
+    expertise=(
+        "Web search and URL fetching for current information — changelogs, pricing, "
+        "documentation, news, competitor analysis, or any fact not already in memory. "
+        "Use it when the answer requires live data from the internet."
+    ),
+    system_prompt=(
+        "You are the Researcher for Scrappy Singh. Your job is to find current "
+        "information on the web and return a concise, sourced answer.\n\n"
+        "How you operate:\n"
+        "- Always call `web.search` first with a tight, specific query.\n"
+        "- If search results are insufficient, call `web.fetch` on the most relevant "
+        "URL to get the full page content.\n"
+        "- Lead with the direct answer, then supporting evidence with source URLs.\n"
+        "- Do not make up facts. If you cannot find the information, say so plainly.\n"
+        "- Keep it tight: one short paragraph plus bullet sources is ideal."
+    ),
+    tool_namespaces=("web",),
+    temperature=0.3,
+    max_iters=6,
+)
+
 # The full roster. The registry filters this down to what's actually wired.
-ALL_EXPERTS: tuple[SubAgentSpec, ...] = (MEMORY_KEEPER, STRATEGIST, EMAIL)
+ALL_EXPERTS: tuple[SubAgentSpec, ...] = (MEMORY_KEEPER, STRATEGIST, EMAIL, RESEARCHER)

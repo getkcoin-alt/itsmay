@@ -17,7 +17,11 @@ dependencies = [
     "sse-starlette>=2.1",
     "python-multipart>=0.0.12",
     "fastembed>=0.4",
+    "pyyaml>=6.0",
 ]
+
+[project.scripts]
+scrappy = "apps.cli:main"
 
 [project.optional-dependencies]
 # Server doesn't need either of these in the default cloud-STT path.
