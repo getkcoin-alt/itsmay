@@ -14,6 +14,7 @@ from apps.api.routers import agents as agents_router
 from apps.api.routers import browser as browser_router
 from apps.api.routers import chat as chat_router
 from apps.api.routers import console as console_router
+from apps.api.routers import memory as memory_router
 from apps.api.routers import voice as voice_router
 from core.brain.llm import LLMClient
 from core.config import get_settings
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(console_router.router)
     app.include_router(browser_router.router)
     app.include_router(agents_router.router)
+    app.include_router(memory_router.router)
 
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
