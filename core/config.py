@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # ── Mac agent ─────────────────────────────────────────────────
     vault_api_base: str = "http://127.0.0.1:8000"
 
+    # ── VAD (voice activity detection) ────────────────────────────
+    vad_aggressiveness: int = 2   # 0–3, higher = less sensitive to noise
+    vad_silence_ms: int = 700     # silence required to end utterance
+
     # ── Optional: local Ollama (dev only) ─────────────────────────
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "gemma3:latest"
