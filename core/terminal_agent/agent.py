@@ -120,9 +120,15 @@ class TerminalAgent:
             return True
         return False
 
-    async def _run(self, llm: LLMClient) -> None:
+    async def _run(self, llm: LLMClient) -> None:  # noqa: ARG002 — llm kept for API compat
         self.status = "running"
         os.makedirs(self.work_dir, exist_ok=True)
+
+        # Each agent owns an isolated LLM client so its streaming calls never
+        # share an httpx connection pool with the parent chat request. Without
+        # this, concurrent streams on the shared client cause "stream has been
+        # closed" errors mid-conversation.
+        own_llm = LLMClient()
 
         messages: list[Message] = [
             Message(role="system", content=_SYSTEM),
@@ -134,7 +140,7 @@ class TerminalAgent:
 
         try:
             async for ev in run_tool_loop(
-                llm=llm,
+                llm=own_llm,
                 messages=messages,
                 router=router,
                 ctx=ctx,
@@ -163,6 +169,9 @@ class TerminalAgent:
             self.result = str(exc)
             self._add_log("error", str(exc))
             log.exception("terminal_agent.failed", agent_id=self.id)
+
+        finally:
+            await own_llm.aclose()
 
         self.finished_at = datetime.now(UTC).isoformat()
         log.info("terminal_agent.done", agent_id=self.id, status=self.status)
