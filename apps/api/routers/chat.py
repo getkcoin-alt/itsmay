@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from apps.api.deps import get_embedder, get_episodic, get_llm, get_semantic
 from core.agents.registry import get_agent_registry
-from core.brain.agent_loop import ClientToolCall, Done, Token, ToolResult, run_tool_loop
+from core.brain.agent_loop import ClientToolCall, Done, Token, ToolResult, ToolStart, run_tool_loop
 from core.brain.context_builder import build_messages
 from core.brain.llm import LLMClient
 from core.brain.orchestrator import Orchestrator
@@ -153,8 +153,12 @@ async def chat(
                             }
                         ),
                     }
+                elif isinstance(ev, ToolStart):
+                    yield {
+                        "event": "tool_start",
+                        "data": json.dumps({"id": ev.id, "tool": ev.name}),
+                    }
                 elif isinstance(ev, ToolResult):
-                    # Observability only — the Mac client ignores unknown events.
                     yield {
                         "event": "status",
                         "data": json.dumps({"tool": ev.name, "result": ev.summary}),

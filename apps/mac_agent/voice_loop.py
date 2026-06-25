@@ -33,6 +33,12 @@ from dotenv import load_dotenv
 from apps.mac_agent.chrome import format_tab_list, list_tabs, read_tab_text
 from apps.mac_agent.tab_watcher import TabWatcher
 
+try:
+    from apps.mac_agent.vad import BargeInMonitor, VADRecorder
+    _HAS_VAD = True
+except ImportError:
+    _HAS_VAD = False
+
 # Load .env from cwd so VAULT_API_BASE / VAULT_API_KEY work without manual exports.
 load_dotenv()
 
@@ -51,6 +57,25 @@ APPROVAL_REQUIRED = {"mac.run_applescript"}
 
 # Module-level watcher — only one tab watched at a time.
 _active_watcher: TabWatcher | None = None
+
+VAD_AGGRESSIVENESS = int(os.environ.get("VAD_AGGRESSIVENESS", "2"))
+VAD_SILENCE_MS = int(os.environ.get("VAD_SILENCE_MS", "700"))
+
+_TOOL_ACK: dict[str, str] = {
+    "web": "Searching.",
+    "web.search": "Searching.",
+    "web.fetch": "Fetching that.",
+    "memory": "Checking my memory.",
+    "memory.search": "Checking my memory.",
+    "memory.save": "Got it.",
+    "terminal": "Running that now.",
+    "terminal.spawn": "Spinning that up.",
+    "ask_researcher": "Looking into it.",
+    "ask_engineer": "On it.",
+    "ask_analyst": "Analyzing.",
+    "gmail": "Checking your email.",
+    "cal": "Checking your calendar.",
+}
 
 
 def _default_headers() -> dict[str, str]:
@@ -145,9 +170,7 @@ async def tts_to_file(client: httpx.AsyncClient, text: str, out: Path) -> None:
 class AudioPlayer:
     """Background thread that plays queued MP3 files sequentially via `afplay`.
 
-    `afplay` is invoked with stdin=DEVNULL so it can't consume the user's
-    ENTER keystroke while audio is playing (the bug that made the second
-    push-to-talk press silently disappear).
+    Uses Popen (not run) so `interrupt()` can kill mid-sentence for barge-in.
     """
 
     _SENTINEL: object = object()
@@ -155,6 +178,8 @@ class AudioPlayer:
     def __init__(self) -> None:
         self.q: queue.Queue = queue.Queue()
         self._busy = threading.Event()
+        self._current_proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -166,7 +191,17 @@ class AudioPlayer:
             path: Path = item
             self._busy.set()
             try:
-                subprocess.run(["afplay", str(path)], check=False, stdin=subprocess.DEVNULL)
+                proc = subprocess.Popen(
+                    ["afplay", str(path)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                with self._lock:
+                    self._current_proc = proc
+                proc.wait()
+                with self._lock:
+                    self._current_proc = None
             finally:
                 path.unlink(missing_ok=True)
                 self._busy.clear()
@@ -174,10 +209,22 @@ class AudioPlayer:
     def play(self, path: Path) -> None:
         self.q.put(path)
 
+    def interrupt(self) -> None:
+        """Kill current audio and discard all queued items (for barge-in)."""
+        while True:
+            try:
+                item = self.q.get_nowait()
+                if isinstance(item, Path):
+                    item.unlink(missing_ok=True)
+            except queue.Empty:
+                break
+        with self._lock:
+            proc = self._current_proc
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+        self._busy.clear()
+
     async def drain(self) -> None:
-        # Wait until both the queue is empty AND the current item finished
-        # playing — otherwise drain returns mid-utterance and the next
-        # input() prompt overlaps the tail of the audio.
         while not self.q.empty() or self._busy.is_set():
             await asyncio.sleep(0.05)
 
@@ -317,11 +364,23 @@ def pop_phrase(buf: str) -> tuple[str | None, str]:
 
 
 # ── main loop ───────────────────────────────────────────────────
-async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str | None) -> str | None:
-    """One push-to-talk round. Returns the (possibly new) session_id to persist."""
+async def _record_audio() -> np.ndarray | None:
+    """Auto-detect speech via VAD, or fall back to push-to-talk."""
+    if _HAS_VAD:
+        print("\n● listening…", flush=True)
+        try:
+            recorder = VADRecorder(aggressiveness=VAD_AGGRESSIVENESS, silence_ms=VAD_SILENCE_MS)
+            return await asyncio.to_thread(recorder.record)
+        except Exception as e:
+            print(f"[vad] {e} — push-to-talk", file=sys.stderr)
     input("\n[ENTER to talk]")
-    audio = record_until_enter()
-    if audio.size < SAMPLE_RATE * MIN_RECORDING_SEC:
+    return record_until_enter()
+
+
+async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str | None) -> str | None:
+    """One VAD-powered round (or push-to-talk fallback). Returns updated session_id."""
+    audio = await _record_audio()
+    if audio is None or audio.size < SAMPLE_RATE * MIN_RECORDING_SEC:
         print("(too short, skipped)")
         return session_id
 
@@ -348,6 +407,7 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
     buf = ""
     tts_tasks: list[asyncio.Task] = []
     new_session_id = session_id
+    barge_in: BargeInMonitor | None = None
 
     async def synth(snippet: str) -> None:
         out = Path(tempfile.mkstemp(suffix=".mp3")[1])
@@ -359,8 +419,20 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
             return
         player.play(out)
 
+    if _HAS_VAD:
+        try:
+            barge_in = BargeInMonitor(aggressiveness=VAD_AGGRESSIVENESS)
+            barge_in.start()
+        except Exception:
+            barge_in = None
+
     try:
         async for evt, data in stream_chat(client, text, session_id):
+            if barge_in and barge_in.detected.is_set():
+                print("\n⚡ [barge-in]", flush=True)
+                player.interrupt()
+                break
+
             if evt == "session":
                 new_session_id = json.loads(data)["session_id"]
             elif evt == "token":
@@ -372,6 +444,25 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
                     if phrase is None:
                         break
                     tts_tasks.append(asyncio.create_task(synth(phrase)))
+            elif evt == "tool_start":
+                try:
+                    payload = json.loads(data)
+                    tool = payload.get("tool", "")
+                    ack = _TOOL_ACK.get(tool) or _TOOL_ACK.get(tool.split(".")[0], "")
+                    if ack:
+                        if buf.strip():
+                            tts_tasks.append(asyncio.create_task(synth(buf.strip())))
+                            buf = ""
+                        tts_tasks.append(asyncio.create_task(synth(ack)))
+                    print(f"\n  → {tool}…", flush=True)
+                except json.JSONDecodeError:
+                    pass
+            elif evt == "status":
+                try:
+                    payload = json.loads(data)
+                    print(f"\n  ✓ {payload.get('tool', '?')}", flush=True)
+                except json.JSONDecodeError:
+                    pass
             elif evt == "tool_call":
                 try:
                     tc = json.loads(data)
@@ -381,7 +472,6 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
                 tname = tc.get("name", "")
                 targs = tc.get("arguments") or {}
                 print(f"\n→ {tname}({json.dumps(targs)})", flush=True)
-                # Execute synchronously off the event loop to avoid blocking SSE.
                 result = await asyncio.to_thread(execute_mac_tool, tname, targs)
                 print(f"  {result}", flush=True)
             elif evt == "done":
@@ -396,19 +486,25 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
     except httpx.HTTPError as e:
         print(f"\n[chat network error] {type(e).__name__}: {e}", file=sys.stderr)
         return new_session_id
+    finally:
+        if barge_in:
+            barge_in.stop()
 
-    if buf.strip():
+    interrupted = barge_in is not None and barge_in.detected.is_set()
+    if buf.strip() and not interrupted:
         tts_tasks.append(asyncio.create_task(synth(buf.strip())))
 
     if tts_tasks:
         await asyncio.gather(*tts_tasks, return_exceptions=True)
-    await player.drain()
-    print()  # newline after streaming response
+    if not interrupted:
+        await player.drain()
+    print()
     return new_session_id
 
 
 async def main() -> None:
-    print(f"Vault Zeta voice agent  →  {API_BASE}")
+    mode = "VAD auto-detect" if _HAS_VAD else "push-to-talk"
+    print(f"Vault Zeta voice agent  →  {API_BASE}  ({mode})")
     print("Loading session…", end=" ", flush=True)
     session_id: str | None = (
         SESSION_FILE.read_text().strip() if SESSION_FILE.exists() else None

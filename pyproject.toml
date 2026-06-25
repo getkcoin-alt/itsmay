@@ -26,7 +26,7 @@ scrappy = "apps.cli:main"
 [project.optional-dependencies]
 # Server doesn't need either of these in the default cloud-STT path.
 whisper_local = ["faster-whisper>=1.0"]      # only if STT_PROVIDER=local
-mac = ["sounddevice>=0.5"]                   # only for the Mac voice agent
+mac = ["sounddevice>=0.5", "webrtcvad>=2.0.10"]  # only for the Mac voice agent
 gmail = [                                    # Gmail connector (set GOOGLE_CREDENTIALS_JSON)
     "google-api-python-client>=2.140",
     "google-auth-httplib2>=0.2",

@@ -67,7 +67,12 @@ class ElevenLabsTTS:
         payload = {
             "text": text,
             "model_id": model_id or self.model_id,
-            "voice_settings": {"stability": 0.45, "similarity_boost": 0.75},
+            "voice_settings": {
+                "stability": 0.35,
+                "similarity_boost": 0.75,
+                "style": 0.40,
+                "use_speaker_boost": True,
+            },
         }
         async with self._client.stream(
             "POST", url, params=params, headers=headers, json=payload

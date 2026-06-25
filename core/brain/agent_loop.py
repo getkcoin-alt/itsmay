@@ -66,6 +66,14 @@ class ToolResult:
 
 
 @dataclass(slots=True)
+class ToolStart:
+    """A server tool is about to run. Emitted right before execute_server is called."""
+
+    id: str
+    name: str
+
+
+@dataclass(slots=True)
 class Done:
     """Terminal event. Carries token accounting and why the loop stopped."""
 
@@ -75,7 +83,7 @@ class Done:
     stop_reason: str = "stop"  # "stop" | "max_iters"
 
 
-LoopEvent = Token | ClientToolCall | ToolResult | Done
+LoopEvent = Token | ClientToolCall | ToolStart | ToolResult | Done
 
 
 class ToolRouter(Protocol):
@@ -156,6 +164,7 @@ async def run_tool_loop(
         messages.append(assistant_tool_call_message(server_calls, content=pass_text))
         for c in server_calls:
             name = c.get("name") or ""
+            yield ToolStart(id=c.get("id") or "", name=name)
             try:
                 result = await router.execute_server(name, c.get("arguments") or {}, ctx)
             except Exception as e:  # never let a tool blow up the whole turn
