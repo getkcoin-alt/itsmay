@@ -71,7 +71,13 @@ class TerminalConnector(Connector):
                 return {"ok": False, "error": "task is required"}
             if ctx.llm is None:
                 return {"ok": False, "error": "LLM not available in context"}
-            agent = store.spawn(task, ctx.llm)
+            agent = store.spawn(
+                task,
+                ctx.llm,
+                embedder=ctx.embedder,
+                semantic=ctx.semantic,
+                user_uuid=ctx.user_uuid,
+            )
             return {
                 "agent_id": agent.id,
                 "status": agent.status,

@@ -6,12 +6,15 @@ Usage:
   scrappy agent "task"         spawn an agent and stream its work live
   scrappy agents               list recent agents with status
   scrappy watch <id>           tail a running or finished agent's log
+  scrappy worker               run the local executor — agents run on THIS Mac
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
 
 Environment:
-  VAULT_API_BASE  server base URL (default: http://127.0.0.1:8000)
-  VAULT_API_KEY   bearer token   (default: empty = open mode)
+  VAULT_API_BASE       server base URL (default: http://127.0.0.1:8000)
+  VAULT_API_KEY        bearer token   (default: empty = open mode)
+  SCRAPPY_CLAUDE_FLAGS extra flags passed to `claude -p` by the worker
+                       (e.g. "--permission-mode acceptEdits")
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -364,6 +369,147 @@ async def _watch_agent(agent_id: str) -> None:
         print(f"{_RED}Error: {e}{_RESET}")
 
 
+# ── local worker: agents' commands run on THIS machine ──────────────
+WORKSPACE = Path.home() / "scrappy-workspace"
+
+
+def _run_local_command(kind: str, cmd: str, timeout: int, agent_id: str) -> str:
+    """Execute one agent command locally and return combined stdout+stderr."""
+    workdir = WORKSPACE / agent_id
+    try:
+        workdir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        workdir = WORKSPACE
+    shell = os.environ.get("SHELL", "/bin/bash")
+    if kind == "claude":
+        flags = os.environ.get("SCRAPPY_CLAUDE_FLAGS", "")
+        full = f"claude -p {shlex.quote(cmd)} {flags}".strip()
+    else:
+        full = cmd
+    try:
+        proc = subprocess.run(
+            [shell, "-lc", full],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return f"[timed out after {timeout}s]"
+    except FileNotFoundError:
+        return f"[worker: shell {shell!r} not found]"
+    except Exception as e:
+        return f"[worker error: {type(e).__name__}: {e}]"
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    if len(out) > 4096:
+        out = out[:4096] + "\n…[truncated]"
+    return out or "(no output)"
+
+
+def _display_command(cmd: dict, current: dict) -> None:
+    if cmd.get("agent_id") != current.get("id"):
+        current["id"] = cmd.get("agent_id")
+        print(f"\n{_CYAN}[agent {cmd.get('agent_id')}]{_RESET}  {cmd.get('task', '')}")
+    thought = (cmd.get("thought") or "").strip()
+    if thought:
+        print(f"  {_DIM}thinking  {thought[:300]}{_RESET}", flush=True)
+    if cmd.get("kind") == "claude":
+        print(f"  {_YELLOW}▸ claude{_RESET} {_DIM}{cmd.get('cmd', '')[:200]}{_RESET}", flush=True)
+    else:
+        print(f"  {_YELLOW}$ {cmd.get('cmd', '')}{_RESET}", flush=True)
+
+
+def _display_output(output: str) -> None:
+    lines = output.splitlines()
+    for line in lines[:12]:
+        print(f"  {_DIM}> {line[:200]}{_RESET}", flush=True)
+    if len(lines) > 12:
+        print(f"  {_DIM}> … ({len(lines) - 12} more lines){_RESET}", flush=True)
+
+
+async def _worker() -> None:
+    """Long-running local executor: agent bash/claude commands run on this Mac."""
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    WORKSPACE.mkdir(parents=True, exist_ok=True)
+
+    print(f"{_BOLD}Scrappy worker{_RESET}  →  {API_BASE}")
+    print(f"{_DIM}Workspace: {WORKSPACE}{_RESET}")
+
+    async with httpx.AsyncClient() as client:
+        try:
+            h = await client.get(f"{API_BASE}/v1/health", headers=headers, timeout=10)
+            h.raise_for_status()
+        except Exception as e:
+            print(f"{_RED}Cannot reach {API_BASE} — start the server first.\n  {e}{_RESET}")
+            return
+        print(f"{_GREEN}connected — waiting for tasks (Ctrl+C to stop){_RESET}\n")
+
+        stop = asyncio.Event()
+        current: dict = {"id": None}
+
+        async def heartbeat() -> None:
+            while not stop.is_set():
+                try:
+                    await client.post(
+                        f"{API_BASE}/v1/worker/heartbeat", headers=headers, timeout=10
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(15)
+
+        async def command_loop() -> None:
+            while not stop.is_set():
+                try:
+                    r = await client.get(
+                        f"{API_BASE}/v1/worker/next", headers=headers, timeout=35
+                    )
+                except (httpx.ReadTimeout, httpx.ConnectTimeout):
+                    continue
+                except httpx.HTTPError as e:
+                    print(f"{_RED}poll error: {e}{_RESET}")
+                    await asyncio.sleep(2)
+                    continue
+                if r.status_code == 401:
+                    print(f"{_RED}401 Unauthorized — set VAULT_API_KEY{_RESET}")
+                    stop.set()
+                    return
+                if r.status_code == 204:
+                    continue
+                try:
+                    cmd = r.json()
+                except Exception:
+                    continue
+
+                _display_command(cmd, current)
+                output = await asyncio.to_thread(
+                    _run_local_command,
+                    cmd.get("kind", "bash"),
+                    cmd.get("cmd", ""),
+                    int(cmd.get("timeout", 60) or 60),
+                    cmd.get("agent_id", "misc"),
+                )
+                _display_output(output)
+                try:
+                    await client.post(
+                        f"{API_BASE}/v1/worker/result",
+                        json={"command_id": cmd.get("command_id"), "output": output},
+                        headers=headers,
+                        timeout=15,
+                    )
+                except Exception as e:
+                    print(f"{_RED}failed to post result: {e}{_RESET}")
+
+        try:
+            await asyncio.gather(heartbeat(), command_loop())
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        finally:
+            stop.set()
+
+
 async def _repl() -> None:
     """Interactive REPL — keeps session alive across turns."""
     session_id = _load_session()
@@ -407,7 +553,14 @@ def main() -> None:
         SESSION_FILE.unlink(missing_ok=True)
         args = [a for a in args if a != "--new"]
 
-    # Subcommands: agents / agent / watch
+    # Subcommands: worker / agents / agent / watch
+    if args and args[0] == "worker":
+        try:
+            asyncio.run(_worker())
+        except KeyboardInterrupt:
+            print("\nworker stopped.")
+        return
+
     if args and args[0] == "agents":
         asyncio.run(_list_agents())
         return

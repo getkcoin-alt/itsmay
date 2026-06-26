@@ -125,17 +125,29 @@ async def run_tool_loop(
         # ── one streamed model pass ──────────────────────────────
         text_parts: list[str] = []
         tool_calls: list[dict] = []
-        async for chunk in llm.chat_stream(messages, temperature=temperature, tools=tools):
-            if chunk.delta:
-                text_parts.append(chunk.delta)
-                yield Token(chunk.delta)  # stream live
-            if chunk.done:
-                if chunk.prompt_eval_count is not None:
-                    prompt_tokens = chunk.prompt_eval_count
-                if chunk.eval_count is not None:
-                    completion_tokens = chunk.eval_count
-                tool_calls = chunk.tool_calls or []
-                break
+        # Hold the generator explicitly so we can close it deterministically.
+        # Breaking out of `async for` on the done-chunk leaves the underlying
+        # httpx response OPEN until lazy GC finalization. On the next pass a
+        # second stream opens on the same client and the connection pool trips
+        # over the half-closed one — surfacing as "Attempted to read or stream
+        # content, but the stream has been closed" (and it compounds across
+        # nested expert loops sharing one client). `aclose()` forces the
+        # response cleanup to run now, in this task, before the next pass.
+        stream = llm.chat_stream(messages, temperature=temperature, tools=tools)
+        try:
+            async for chunk in stream:
+                if chunk.delta:
+                    text_parts.append(chunk.delta)
+                    yield Token(chunk.delta)  # stream live
+                if chunk.done:
+                    if chunk.prompt_eval_count is not None:
+                        prompt_tokens = chunk.prompt_eval_count
+                    if chunk.eval_count is not None:
+                        completion_tokens = chunk.eval_count
+                    tool_calls = chunk.tool_calls or []
+                    break
+        finally:
+            await stream.aclose()
         pass_text = "".join(text_parts)
 
         if not tool_calls:
