@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from core.config import get_settings
 from core.terminal_agent.registry import get_agent_store
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -16,6 +17,23 @@ router = APIRouter(prefix="/v1/agents", tags=["agents"])
 
 class SpawnRequest(BaseModel):
     task: str
+
+
+async def _spawn_with_memory(request: Request, task: str):
+    """Spawn an agent wired to semantic memory (RAG) for the configured user."""
+    state = request.app.state
+    user_uuid = None
+    try:
+        user_uuid = await state.episodic.get_or_create_user(get_settings().user_handle)
+    except Exception:
+        pass
+    return get_agent_store().spawn(
+        task,
+        state.llm,
+        embedder=getattr(state, "embedder", None),
+        semantic=getattr(state, "semantic", None),
+        user_uuid=user_uuid,
+    )
 
 
 @router.get("")
@@ -30,7 +48,7 @@ async def stream_agent(req: SpawnRequest, request: Request) -> EventSourceRespon
     task = req.task.strip()
     if not task:
         raise HTTPException(status_code=422, detail="task is required")
-    agent = get_agent_store().spawn(task, request.app.state.llm)
+    agent = await _spawn_with_memory(request, task)
 
     async def generate():
         yield {

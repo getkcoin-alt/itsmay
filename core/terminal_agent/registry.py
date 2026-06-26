@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from core.brain.llm import LLMClient
 from core.terminal_agent.agent import TerminalAgent
 
@@ -12,8 +14,18 @@ class AgentStore:
     def __init__(self) -> None:
         self._agents: dict[str, TerminalAgent] = {}
 
-    def spawn(self, task: str, llm: LLMClient) -> TerminalAgent:
-        agent = TerminalAgent(task)
+    def spawn(
+        self,
+        task: str,
+        llm: LLMClient,
+        *,
+        embedder: Any | None = None,
+        semantic: Any | None = None,
+        user_uuid: Any | None = None,
+    ) -> TerminalAgent:
+        agent = TerminalAgent(
+            task, embedder=embedder, semantic=semantic, user_uuid=user_uuid
+        )
         self._agents[agent.id] = agent
         agent.launch(llm)
         if len(self._agents) > self._MAX:
