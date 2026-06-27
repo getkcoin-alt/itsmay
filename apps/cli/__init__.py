@@ -165,14 +165,42 @@ async def _stream_turn(message: str, session_id: str | None) -> str | None:
     return new_session_id
 
 
+def _load_knowledge_entries() -> list[dict] | None:
+    """Read scripts/knowledge.yaml from the repo (package- or cwd-relative)."""
+    candidates = [
+        Path(__file__).resolve().parents[2] / "scripts" / "knowledge.yaml",
+        Path.cwd() / "scripts" / "knowledge.yaml",
+    ]
+    path = next((p for p in candidates if p.exists()), None)
+    if path is None:
+        return None
+    try:
+        import yaml
+
+        return yaml.safe_load(path.read_text()) or []
+    except Exception as e:
+        print(f"{_RED}could not read {path}: {e}{_RESET}")
+        return None
+
+
 async def _seed() -> None:
-    """Call POST /v1/memory/seed (populate RAG from knowledge.yaml) and print the result."""
+    """Populate RAG from the repo's knowledge.yaml via POST /v1/memory/seed.
+
+    The entries are read locally and shipped in the request, so seeding works
+    even though the deployed server image doesn't include scripts/.
+    """
     headers: dict[str, str] = {}
     if API_KEY:
         headers["Authorization"] = f"Bearer {API_KEY}"
+    entries = _load_knowledge_entries()
+    payload = {"entries": entries} if entries else {}
+    if not entries:
+        print(f"{_DIM}no local knowledge.yaml found — asking server for its copy…{_RESET}")
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{API_BASE}/v1/memory/seed", headers=headers)
+            resp = await client.post(
+                f"{API_BASE}/v1/memory/seed", headers=headers, json=payload
+            )
             resp.raise_for_status()
             d = resp.json()
             if d.get("error"):
