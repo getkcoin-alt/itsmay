@@ -34,10 +34,11 @@ from apps.mac_agent.chrome import format_tab_list, list_tabs, read_tab_text
 from apps.mac_agent.tab_watcher import TabWatcher
 
 try:
-    from apps.mac_agent.vad import BargeInMonitor, VADRecorder
+    from apps.mac_agent.vad import BargeInMonitor, EnergyVADRecorder, VADRecorder
     _HAS_VAD = True
 except ImportError:
     _HAS_VAD = False
+    EnergyVADRecorder = None  # type: ignore[assignment,misc]
 
 # Load .env from cwd so VAULT_API_BASE / VAULT_API_KEY work without manual exports.
 load_dotenv()
@@ -364,22 +365,44 @@ def pop_phrase(buf: str) -> tuple[str | None, str]:
 
 
 # ── main loop ───────────────────────────────────────────────────
-async def _record_audio() -> np.ndarray | None:
-    """Auto-detect speech via VAD, or fall back to push-to-talk."""
+async def _record_audio(mute: threading.Event | None = None) -> np.ndarray | None:
+    """Hands-free capture of one utterance.
+
+    Prefers webrtcvad (most accurate); falls back to a pure-Python energy VAD
+    (no native deps) so it stays hands-free even without webrtcvad; only drops to
+    push-to-talk if audio capture itself is unavailable.
+    """
     if _HAS_VAD:
-        print("\n● listening…", flush=True)
+        # webrtcvad path — raises ImportError if the wheel isn't installed.
         try:
             recorder = VADRecorder(aggressiveness=VAD_AGGRESSIVENESS, silence_ms=VAD_SILENCE_MS)
+            print("\n● listening…", flush=True)
             return await asyncio.to_thread(recorder.record)
+        except ImportError:
+            pass  # no webrtcvad → energy VAD below
         except Exception as e:
-            print(f"[vad] {e} — push-to-talk", file=sys.stderr)
+            print(f"[vad] {e}", file=sys.stderr)
+
+    if EnergyVADRecorder is not None:
+        try:
+            print("\n● listening…", flush=True)
+            recorder = EnergyVADRecorder(silence_ms=VAD_SILENCE_MS)
+            return await asyncio.to_thread(recorder.record, mute)
+        except Exception as e:
+            print(f"[energy-vad] {e} — push-to-talk", file=sys.stderr)
+
     input("\n[ENTER to talk]")
     return record_until_enter()
 
 
-async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str | None) -> str | None:
+async def turn(
+    client: httpx.AsyncClient,
+    player: AudioPlayer,
+    session_id: str | None,
+    mute: threading.Event | None = None,
+) -> str | None:
     """One VAD-powered round (or push-to-talk fallback). Returns updated session_id."""
-    audio = await _record_audio()
+    audio = await _record_audio(mute)
     if audio is None or audio.size < SAMPLE_RATE * MIN_RECORDING_SEC:
         print("(too short, skipped)")
         return session_id
@@ -502,6 +525,23 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
     return new_session_id
 
 
+def _mute_watcher(muted: threading.Event) -> None:
+    """Background thread: press ENTER to toggle mute (pause listening)."""
+    while True:
+        try:
+            line = sys.stdin.readline()
+        except Exception:
+            return
+        if line == "":  # stdin closed
+            return
+        if muted.is_set():
+            muted.clear()
+            print("🎙️  unmuted — listening", flush=True)
+        else:
+            muted.set()
+            print("🔇 muted — press ENTER to resume", flush=True)
+
+
 async def worker_status(client: httpx.AsyncClient) -> bool | None:
     """True if a Mac worker is connected, False if not, None if unknown."""
     try:
@@ -547,13 +587,23 @@ async def main() -> None:
         print(f"✗ Server not reachable at {API_BASE} — start the API first.\n   {e}")
         return
 
+    hands_free = _HAS_VAD or EnergyVADRecorder is not None
+    muted: threading.Event | None = None
+    if hands_free:
+        muted = threading.Event()
+        threading.Thread(target=_mute_watcher, args=(muted,), daemon=True).start()
+        print("  hands-free — just talk. Press ENTER to mute/unmute, Ctrl+C to quit.")
+
     player = AudioPlayer()
     try:
         async with httpx.AsyncClient(headers=headers) as client:
             last_worker = await worker_status(client)
             _print_worker_status(last_worker)
             while True:
-                session_id = await turn(client, player, session_id)
+                if muted is not None and muted.is_set():
+                    await asyncio.sleep(0.2)
+                    continue
+                session_id = await turn(client, player, session_id, muted)
                 if session_id:
                     SESSION_FILE.write_text(session_id)
                 # Surface worker connect/disconnect transitions between turns.

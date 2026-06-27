@@ -26,7 +26,10 @@ scrappy = "apps.cli:main"
 [project.optional-dependencies]
 # Server doesn't need either of these in the default cloud-STT path.
 whisper_local = ["faster-whisper>=1.0"]      # only if STT_PROVIDER=local
-mac = ["sounddevice>=0.5", "webrtcvad>=2.0.10"]  # only for the Mac voice agent
+# Mac voice agent. webrtcvad-wheels ships prebuilt wheels (no C compiler needed,
+# unlike plain `webrtcvad`); it's optional — the loop falls back to a pure-Python
+# energy VAD if it's absent, so voice stays hands-free either way.
+mac = ["sounddevice>=0.5", "webrtcvad-wheels>=2.0.14"]
 gmail = [                                    # Gmail connector (set GOOGLE_CREDENTIALS_JSON)
     "google-api-python-client>=2.140",
     "google-auth-httplib2>=0.2",
