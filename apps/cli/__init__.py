@@ -428,86 +428,150 @@ def _display_output(output: str) -> None:
         print(f"  {_DIM}> … ({len(lines) - 12} more lines){_RESET}", flush=True)
 
 
+class _WorkerAuthError(Exception):
+    """Fatal: the server rejected our credentials; no point reconnecting."""
+
+
+async def _serve(client: httpx.AsyncClient, headers: dict, current: dict) -> None:
+    """Run heartbeat + command loop until the connection fails, then raise.
+
+    A persistent poll failure raises ConnectionError so the caller reconnects;
+    a 401 raises _WorkerAuthError so the caller stops for good.
+    """
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        while not stop.is_set():
+            try:
+                await client.post(
+                    f"{API_BASE}/v1/worker/heartbeat", headers=headers, timeout=10
+                )
+            except Exception:
+                pass  # the command loop owns connection-health decisions
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=15)
+            except TimeoutError:
+                pass
+
+    async def command_loop() -> None:
+        fails = 0
+        while not stop.is_set():
+            try:
+                r = await client.get(
+                    f"{API_BASE}/v1/worker/next", headers=headers, timeout=35
+                )
+            except (httpx.ReadTimeout, httpx.ConnectTimeout):
+                continue  # long-poll window expired — just re-poll
+            except (httpx.HTTPError, OSError):
+                fails += 1
+                if fails >= 3:
+                    raise ConnectionError("worker poll failed repeatedly") from None
+                await asyncio.sleep(1)
+                continue
+            fails = 0
+            if r.status_code == 401:
+                raise _WorkerAuthError
+            if r.status_code == 204:
+                continue
+            if r.status_code >= 500:
+                await asyncio.sleep(1)  # server hiccup — stay connected, retry
+                continue
+            try:
+                cmd = r.json()
+            except Exception:
+                continue
+
+            _display_command(cmd, current)
+            output = await asyncio.to_thread(
+                _run_local_command,
+                cmd.get("kind", "bash"),
+                cmd.get("cmd", ""),
+                int(cmd.get("timeout", 60) or 60),
+                cmd.get("agent_id", "misc"),
+            )
+            _display_output(output)
+            try:
+                await client.post(
+                    f"{API_BASE}/v1/worker/result",
+                    json={"command_id": cmd.get("command_id"), "output": output},
+                    headers=headers,
+                    timeout=15,
+                )
+            except Exception as e:
+                print(f"{_RED}failed to post result: {e}{_RESET}")
+
+    hb = asyncio.create_task(heartbeat())
+    try:
+        await command_loop()
+    finally:
+        stop.set()
+        hb.cancel()
+        try:
+            await hb
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
 async def _worker() -> None:
-    """Long-running local executor: agent bash/claude commands run on this Mac."""
+    """Local executor with auto-reconnect: agent commands run on THIS Mac.
+
+    Survives server restarts and network drops — keeps retrying with exponential
+    backoff (2→4→…→30s) instead of exiting, so you can leave it running.
+    """
     headers: dict[str, str] = {}
     if API_KEY:
         headers["Authorization"] = f"Bearer {API_KEY}"
     WORKSPACE.mkdir(parents=True, exist_ok=True)
 
     print(f"{_BOLD}Scrappy worker{_RESET}  →  {API_BASE}")
-    print(f"{_DIM}Workspace: {WORKSPACE}{_RESET}")
+    print(f"{_DIM}Workspace: {WORKSPACE}  ·  Ctrl+C to stop{_RESET}")
 
-    async with httpx.AsyncClient() as client:
-        try:
-            h = await client.get(f"{API_BASE}/v1/health", headers=headers, timeout=10)
-            h.raise_for_status()
-        except Exception as e:
-            print(f"{_RED}Cannot reach {API_BASE} — start the server first.\n  {e}{_RESET}")
-            return
-        print(f"{_GREEN}connected — waiting for tasks (Ctrl+C to stop){_RESET}\n")
+    current: dict = {"id": None}
+    backoff = 2
+    max_backoff = 30
+    connected = False
 
-        stop = asyncio.Event()
-        current: dict = {"id": None}
-
-        async def heartbeat() -> None:
-            while not stop.is_set():
+    try:
+        async with httpx.AsyncClient() as client:
+            while True:
+                # ── (re)establish the connection ───────────────────
                 try:
-                    await client.post(
-                        f"{API_BASE}/v1/worker/heartbeat", headers=headers, timeout=10
+                    h = await client.get(
+                        f"{API_BASE}/v1/health", headers=headers, timeout=10
                     )
-                except Exception:
-                    pass
-                await asyncio.sleep(15)
-
-        async def command_loop() -> None:
-            while not stop.is_set():
-                try:
-                    r = await client.get(
-                        f"{API_BASE}/v1/worker/next", headers=headers, timeout=35
-                    )
-                except (httpx.ReadTimeout, httpx.ConnectTimeout):
-                    continue
-                except httpx.HTTPError as e:
-                    print(f"{_RED}poll error: {e}{_RESET}")
-                    await asyncio.sleep(2)
-                    continue
-                if r.status_code == 401:
-                    print(f"{_RED}401 Unauthorized — set VAULT_API_KEY{_RESET}")
-                    stop.set()
+                    if h.status_code == 401:
+                        raise _WorkerAuthError
+                    h.raise_for_status()
+                except _WorkerAuthError:
+                    print(f"{_RED}401 Unauthorized — check VAULT_API_KEY. Stopping.{_RESET}")
                     return
-                if r.status_code == 204:
-                    continue
-                try:
-                    cmd = r.json()
-                except Exception:
-                    continue
-
-                _display_command(cmd, current)
-                output = await asyncio.to_thread(
-                    _run_local_command,
-                    cmd.get("kind", "bash"),
-                    cmd.get("cmd", ""),
-                    int(cmd.get("timeout", 60) or 60),
-                    cmd.get("agent_id", "misc"),
-                )
-                _display_output(output)
-                try:
-                    await client.post(
-                        f"{API_BASE}/v1/worker/result",
-                        json={"command_id": cmd.get("command_id"), "output": output},
-                        headers=headers,
-                        timeout=15,
-                    )
                 except Exception as e:
-                    print(f"{_RED}failed to post result: {e}{_RESET}")
+                    if connected:
+                        print(f"\n{_RED}✗ disconnected{_RESET} — {e}")
+                        connected = False
+                    print(f"{_DIM}reconnecting in {backoff}s…{_RESET}")
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, max_backoff)
+                    continue
 
-        try:
-            await asyncio.gather(heartbeat(), command_loop())
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            pass
-        finally:
-            stop.set()
+                if not connected:
+                    print(f"{_GREEN}✓ connected — waiting for tasks{_RESET}\n")
+                    connected = True
+                backoff = 2  # reset after a healthy connection
+
+                # ── serve until the connection drops ───────────────
+                try:
+                    await _serve(client, headers, current)
+                except _WorkerAuthError:
+                    print(f"{_RED}401 Unauthorized — check VAULT_API_KEY. Stopping.{_RESET}")
+                    return
+                except (httpx.HTTPError, OSError) as e:
+                    print(f"\n{_RED}✗ disconnected{_RESET} — {e}")
+                    connected = False
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, max_backoff)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("\nworker stopped.")
 
 
 async def _repl() -> None:
