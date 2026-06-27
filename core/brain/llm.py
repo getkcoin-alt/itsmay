@@ -15,6 +15,7 @@ headers fall below configured floors.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -186,17 +187,7 @@ class LLMClient:
         self.model = model or s.llm_model
         self.keep_alive = s.ollama_keep_alive
         self.keys = KeyPool.from_csv(api_key if api_key is not None else s.llm_api_key, label="llm")
-        # Disable keepalive: the tool loop breaks out of each streamed response
-        # early (on the done chunk), so the connection is half-read. With a
-        # keepalive pool, that half-read connection is returned to the pool and
-        # the next stream — or a concurrent one from a spawned agent — reuses it
-        # and raises httpx.StreamClosed ("stream has been closed"). Forcing a
-        # fresh connection per request removes the entire class of bug; the cost
-        # is one extra TLS handshake per LLM call, negligible vs inference time.
-        self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(300.0, connect=10.0),
-            limits=httpx.Limits(max_keepalive_connections=0, max_connections=20),
-        )
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -224,12 +215,20 @@ class LLMClient:
 
     # ── OpenAI-compatible ───────────────────────────────────────
     async def _open_openai_stream(self, payload: dict) -> httpx.Response:
-        """Open a streaming request, rotating keys on 429/401. Returns the
-        response with status checked. Caller owns aclose()."""
+        """Open a streaming request, rotating keys / backing off on 429/401.
+
+        Returns an *open* response on success. On exhaustion raises RuntimeError
+        with the captured error body — never returns a closed response. (Reading
+        a response we already aclose()d is what raised the httpx StreamClosed
+        "stream has been closed" error under concurrent load on a single key.)
+        """
         url = f"{self.base_url}/chat/completions"
-        attempts = max(self.keys.size, 1)
-        last_resp: httpx.Response | None = None
-        for _ in range(attempts):
+        # Allow a couple of extra tries beyond the key count so a single-key
+        # setup can ride out a transient rate limit instead of failing instantly.
+        max_tries = max(self.keys.size, 1) + 2
+        last_status: int | None = None
+        last_body: bytes = b""
+        for attempt in range(max_tries):
             key = self.keys.current()
             headers = {"Content-Type": "application/json"}
             if key:
@@ -237,20 +236,30 @@ class LLMClient:
             req = self._client.build_request("POST", url, json=payload, headers=headers)
             resp = await self._client.send(req, stream=True)
             if resp.status_code == 429:
-                self.keys.mark_rate_limited(parse_retry_after(resp.headers.get("retry-after")))
+                retry_after = parse_retry_after(resp.headers.get("retry-after"))
+                self.keys.mark_rate_limited(retry_after)
+                last_status = 429
+                last_body = await resp.aread()  # read BEFORE closing
                 await resp.aclose()
-                last_resp = resp
+                if attempt < max_tries - 1:
+                    # Brief capped backoff (rotates key too if the pool has more).
+                    await asyncio.sleep(min(retry_after or 1.0, 5.0))
                 continue
             if resp.status_code == 401 and self.keys.size > 1:
                 self.keys.mark_invalid()
+                last_status = 401
+                last_body = await resp.aread()
                 await resp.aclose()
-                last_resp = resp
                 continue
             self.keys.update_from_headers(resp.headers)
             return resp
-        # Exhausted retries — surface last bad response.
-        assert last_resp is not None
-        return last_resp
+        # Exhausted — raise a clean error rather than returning a closed response.
+        detail = last_body[:200].decode(errors="replace") if last_body else ""
+        raise RuntimeError(
+            f"LLM provider unavailable after {max_tries} attempt(s) "
+            f"(last HTTP {last_status}). This usually means the API key is rate "
+            f"limited — slow down or add more keys to LLM_API_KEY. {detail}"
+        )
 
     async def _chat_stream_openai(
         self,
