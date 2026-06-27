@@ -6,6 +6,7 @@ Usage:
   scrappy agent "task"         spawn an agent and stream its work live
   scrappy agents               list recent agents with status
   scrappy watch <id>           tail a running or finished agent's log
+  scrappy voice                start the voice loop — talk to Scrappy out loud
   scrappy worker               run the local executor — agents run on THIS Mac
   scrappy status               server health + worker connected + memory count
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
@@ -727,7 +728,20 @@ def main() -> None:
         SESSION_FILE.unlink(missing_ok=True)
         args = [a for a in args if a != "--new"]
 
-    # Subcommands: worker / agents / agent / watch
+    # Subcommands: voice / worker / status / seed / agents / agent / watch
+    if args and args[0] == "voice":
+        try:
+            from apps.mac_agent.voice_loop import main as voice_main
+        except ImportError as e:
+            print(f"{_RED}voice needs the mac extras — run: pip install -e '.[mac]'"
+                  f"\n  ({e}){_RESET}")
+            return
+        try:
+            asyncio.run(voice_main())
+        except KeyboardInterrupt:
+            pass
+        return
+
     if args and args[0] == "worker":
         try:
             asyncio.run(_worker())
