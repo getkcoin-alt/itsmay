@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from apps.api.deps import get_embedder, get_episodic, get_llm, get_semantic
 from core.brain.llm import LLMClient
@@ -37,23 +38,42 @@ async def consolidate(
     return await consolidate_today(llm, semantic, embedder, user_id)
 
 
+class SeedBody(BaseModel):
+    # The client (scrappy seed) sends the parsed knowledge entries, so seeding
+    # never depends on scripts/ being present in the deployed image. Each entry:
+    # {content, importance?, kind?}.
+    entries: list[dict] | None = None
+
+
 @router.post("/seed")
 async def seed_memory(
+    body: SeedBody | None = None,
     embedder: Embedder = Depends(get_embedder),
     episodic: EpisodicStore = Depends(get_episodic),
     semantic: SemanticStore = Depends(get_semantic),
 ) -> dict:
-    """Seed long-term memory from scripts/knowledge.yaml (idempotent).
+    """Seed long-term memory (idempotent).
 
-    Lets RAG be populated on the live deploy with a single authenticated call
-    instead of needing shell access to the Railway container.
+    Entries come from the request body when provided (the CLI ships them from the
+    repo's scripts/knowledge.yaml); otherwise we fall back to a server-side copy
+    of that file if one happens to be present.
     """
     settings = get_settings()
     user_id = await episodic.get_or_create_user(settings.user_handle)
-    if not KNOWLEDGE_FILE.exists():
-        return {"error": f"knowledge file not found at {KNOWLEDGE_FILE}", "inserted": 0}
 
-    entries = yaml.safe_load(KNOWLEDGE_FILE.read_text()) or []
+    if body is not None and body.entries:
+        entries = body.entries
+    elif KNOWLEDGE_FILE.exists():
+        entries = yaml.safe_load(KNOWLEDGE_FILE.read_text()) or []
+    else:
+        return {
+            "error": (
+                "no entries provided and no server-side knowledge.yaml found — "
+                "run `scrappy seed` from the repo so it can ship the entries"
+            ),
+            "inserted": 0,
+        }
+
     pool = await get_pool()
     inserted = 0
     skipped = 0
