@@ -7,6 +7,7 @@ Usage:
   scrappy agents               list recent agents with status
   scrappy watch <id>           tail a running or finished agent's log
   scrappy worker               run the local executor — agents run on THIS Mac
+  scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
 
@@ -162,6 +163,31 @@ async def _stream_turn(message: str, session_id: str | None) -> str | None:
             print(f"\n{_RED}HTTP {status}: {e.response.text[:200]}{_RESET}")
 
     return new_session_id
+
+
+async def _seed() -> None:
+    """Call POST /v1/memory/seed (populate RAG from knowledge.yaml) and print the result."""
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(f"{API_BASE}/v1/memory/seed", headers=headers)
+            resp.raise_for_status()
+            d = resp.json()
+            if d.get("error"):
+                print(f"{_RED}{d['error']}{_RESET}")
+                return
+            print(
+                f"Seeded memory — inserted: {d.get('inserted', 0)}, "
+                f"skipped: {d.get('skipped', 0)}, total: {d.get('total', 0)}"
+            )
+    except httpx.ConnectError:
+        print(f"{_RED}Cannot connect to {API_BASE} — is the server running?{_RESET}")
+    except httpx.HTTPStatusError as e:
+        print(f"{_RED}HTTP {e.response.status_code}: {e.response.text[:200]}{_RESET}")
+    except Exception as e:
+        print(f"{_RED}Seed failed: {e}{_RESET}")
 
 
 async def _consolidate() -> None:
@@ -623,6 +649,10 @@ def main() -> None:
             asyncio.run(_worker())
         except KeyboardInterrupt:
             print("\nworker stopped.")
+        return
+
+    if args and args[0] == "seed":
+        asyncio.run(_seed())
         return
 
     if args and args[0] == "agents":
