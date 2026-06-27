@@ -26,6 +26,21 @@ KNOWLEDGE_FILE = Path(__file__).resolve().parents[3] / "scripts" / "knowledge.ya
 SEED_SOURCE = "seed:knowledge.yaml"
 
 
+@router.get("/stats")
+async def memory_stats(
+    episodic: EpisodicStore = Depends(get_episodic),
+) -> dict:
+    """Count of long-term memories stored for the configured user (RAG size)."""
+    settings = get_settings()
+    user_id = await episodic.get_or_create_user(settings.user_handle)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT count(*) FROM memories WHERE user_id = $1", user_id
+        )
+    return {"count": int(count or 0)}
+
+
 @router.post("/consolidate")
 async def consolidate(
     llm: LLMClient = Depends(get_llm),
