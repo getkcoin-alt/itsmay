@@ -502,6 +502,27 @@ async def turn(client: httpx.AsyncClient, player: AudioPlayer, session_id: str |
     return new_session_id
 
 
+async def worker_status(client: httpx.AsyncClient) -> bool | None:
+    """True if a Mac worker is connected, False if not, None if unknown."""
+    try:
+        r = await client.get(f"{API_BASE}/v1/worker/status", timeout=5)
+        r.raise_for_status()
+        return bool(r.json().get("online"))
+    except Exception:
+        return None
+
+
+def _print_worker_status(online: bool | None) -> None:
+    if online is True:
+        print("  🖥️  Mac worker: connected — agents run on your Mac")
+    elif online is False:
+        print(
+            "  🖥️  Mac worker: not running — agents run on the server. "
+            "Start it with `scrappy worker`"
+        )
+    # None (unknown / older server) → stay quiet
+
+
 async def main() -> None:
     mode = "VAD auto-detect" if _HAS_VAD else "push-to-talk"
     print(f"Vault Zeta voice agent  →  {API_BASE}  ({mode})")
@@ -529,10 +550,23 @@ async def main() -> None:
     player = AudioPlayer()
     try:
         async with httpx.AsyncClient(headers=headers) as client:
+            last_worker = await worker_status(client)
+            _print_worker_status(last_worker)
             while True:
                 session_id = await turn(client, player, session_id)
                 if session_id:
                     SESSION_FILE.write_text(session_id)
+                # Surface worker connect/disconnect transitions between turns.
+                now = await worker_status(client)
+                if now is not None and now != last_worker:
+                    if now:
+                        print("\n  🖥️  Mac worker connected — agents now run on your Mac.")
+                    else:
+                        print(
+                            "\n  🖥️  Mac worker disconnected — agents will run on the "
+                            "server. Restart `scrappy worker` to bring it back."
+                        )
+                    last_worker = now
     except (KeyboardInterrupt, EOFError):
         print("\nbye.")
     finally:
