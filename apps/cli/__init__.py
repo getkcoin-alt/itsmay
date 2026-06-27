@@ -7,6 +7,7 @@ Usage:
   scrappy agents               list recent agents with status
   scrappy watch <id>           tail a running or finished agent's log
   scrappy worker               run the local executor — agents run on THIS Mac
+  scrappy status               server health + worker connected + memory count
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
@@ -163,6 +164,61 @@ async def _stream_turn(message: str, session_id: str | None) -> str | None:
             print(f"\n{_RED}HTTP {status}: {e.response.text[:200]}{_RESET}")
 
     return new_session_id
+
+
+async def _status() -> None:
+    """Print server health + Mac-worker presence + memory count in one shot."""
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+
+    def mark(ok: bool | None) -> str:
+        if ok is True:
+            return f"{_GREEN}✓{_RESET}"
+        if ok is False:
+            return f"{_RED}✗{_RESET}"
+        return f"{_DIM}?{_RESET}"
+
+    print(f"\n{_BOLD}Scrappy status{_RESET}  →  {API_BASE}")
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            h = await client.get(f"{API_BASE}/v1/health", headers=headers, timeout=10)
+            h.raise_for_status()
+            hd = h.json()
+        except httpx.HTTPStatusError as e:
+            print(f"  {mark(False)} server — HTTP {e.response.status_code}")
+            return
+        except Exception as e:
+            print(f"  {mark(False)} server unreachable — {e}")
+            return
+
+        api_ok = hd.get("api") == "ok"
+        llm_ok = bool((hd.get("llm") or {}).get("ok"))
+        emb_ok = bool((hd.get("embedder") or {}).get("ok"))
+        print(f"  {mark(api_ok)} api    {mark(llm_ok)} llm    {mark(emb_ok)} embedder")
+
+        # Mac worker presence
+        try:
+            w = (await client.get(f"{API_BASE}/v1/worker/status", headers=headers)).json()
+            online = bool(w.get("online"))
+            since = w.get("seconds_since_seen")
+            if online:
+                detail = f" (last seen {since:.0f}s ago)" if since is not None else ""
+                print(f"  {mark(True)} mac worker{detail}")
+            else:
+                print(f"  {mark(False)} mac worker — not connected (run `scrappy worker`)")
+        except Exception:
+            print(f"  {mark(None)} mac worker — unknown")
+
+        # Memory (RAG) size
+        try:
+            m = (await client.get(f"{API_BASE}/v1/memory/stats", headers=headers)).json()
+            count = int(m.get("count", 0) or 0)
+            extra = "" if count else f" {_DIM}(run `scrappy seed`){_RESET}"
+            print(f"  {mark(count > 0)} memory — {count} facts stored{extra}")
+        except Exception:
+            print(f"  {mark(None)} memory — unknown")
+    print()
 
 
 def _load_knowledge_entries() -> list[dict] | None:
@@ -677,6 +733,10 @@ def main() -> None:
             asyncio.run(_worker())
         except KeyboardInterrupt:
             print("\nworker stopped.")
+        return
+
+    if args and args[0] == "status":
+        asyncio.run(_status())
         return
 
     if args and args[0] == "seed":
