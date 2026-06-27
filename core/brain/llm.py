@@ -186,7 +186,17 @@ class LLMClient:
         self.model = model or s.llm_model
         self.keep_alive = s.ollama_keep_alive
         self.keys = KeyPool.from_csv(api_key if api_key is not None else s.llm_api_key, label="llm")
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
+        # Disable keepalive: the tool loop breaks out of each streamed response
+        # early (on the done chunk), so the connection is half-read. With a
+        # keepalive pool, that half-read connection is returned to the pool and
+        # the next stream — or a concurrent one from a spawned agent — reuses it
+        # and raises httpx.StreamClosed ("stream has been closed"). Forcing a
+        # fresh connection per request removes the entire class of bug; the cost
+        # is one extra TLS handshake per LLM call, negligible vs inference time.
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(300.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=0, max_connections=20),
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()
