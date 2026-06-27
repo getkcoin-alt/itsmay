@@ -8,6 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from core.connectors.base import InvocationContext
+from core.connectors.coder import connector as coder_mod
+from core.connectors.coder.connector import CoderConnector
 from core.terminal_agent import agent as agent_mod
 from core.terminal_agent.agent import TerminalAgent, _AgentToolRouter
 from core.worker.bridge import WorkerBridge
@@ -163,3 +166,37 @@ def test_worker_result_unknown_command(client):
     r = client.post("/v1/worker/result", json={"command_id": "nope", "output": "x"})
     assert r.status_code == 200
     assert r.json()["ok"] is False
+
+
+# ── coder connector (claude on the worker) ────────────────────────
+
+async def test_coder_requires_worker_when_offline(monkeypatch):
+    class FakeBridge:
+        def worker_online(self):
+            return False
+
+    monkeypatch.setattr(coder_mod, "get_worker_bridge", lambda: FakeBridge())
+    out = await CoderConnector().invoke(
+        "code", {"prompt": "build a parser"}, InvocationContext(session_id="s")
+    )
+    assert "scrappy worker" in out.lower()
+
+
+async def test_coder_dispatches_claude_when_online(monkeypatch):
+    captured: dict = {}
+
+    class FakeBridge:
+        def worker_online(self):
+            return True
+
+        async def submit(self, **kw):
+            captured.update(kw)
+            return "claude-result"
+
+    monkeypatch.setattr(coder_mod, "get_worker_bridge", lambda: FakeBridge())
+    out = await CoderConnector().invoke(
+        "code", {"prompt": "build a parser"}, InvocationContext(session_id="abcd1234ef")
+    )
+    assert out == "claude-result"
+    assert captured["kind"] == "claude"
+    assert captured["cmd"] == "build a parser"
