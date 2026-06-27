@@ -1,0 +1,95 @@
+"""Coder connector — Scrappy hands coding/generation to Claude Code on the Mac.
+
+Exposes a single server tool, `coder.code`, that Scrappy can call mid-conversation
+whenever the moment calls for writing or generating code. It dispatches a
+`claude -p "<prompt>"` run to the connected `scrappy worker` (via the worker
+bridge) so the real work happens on Karnveer's Mac — with his files, repos, and
+toolchain — and returns Claude Code's final output for Scrappy to relay.
+
+If no worker is connected it returns a short instruction to start one, rather
+than failing, so the conversation can continue.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from core.connectors.base import Connector, ConnectorManifest, InvocationContext, ToolSpec
+from core.logging import get_logger
+from core.worker.bridge import get_worker_bridge
+
+log = get_logger(__name__)
+
+_DEFAULT_TIMEOUT = 240
+_MIN_TIMEOUT = 30
+_MAX_TIMEOUT = 600
+
+
+class CoderConnector(Connector):
+    manifest = ConnectorManifest(
+        name="coder",
+        version="0.1.0",
+        description="Delegate coding and code-generation to Claude Code running on the Mac.",
+        tools=[
+            ToolSpec(
+                name="code",
+                description=(
+                    "Hand a coding or code-generation task to Claude Code (the `claude` "
+                    "CLI) running on Karnveer's Mac, and get its result back. Use this "
+                    "whenever the conversation reaches a point that needs code written, "
+                    "generated, edited, debugged, or a script/file created — instead of "
+                    "writing the code yourself. Give ONE complete, self-contained "
+                    "instruction with all the context Claude needs (it cannot see this "
+                    "conversation). Returns Claude Code's final output. Requires a "
+                    "connected `scrappy worker`; for very long builds prefer terminal.spawn."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": (
+                                "Complete, standalone instruction for Claude Code — what "
+                                "to build/change, in which project or path, and any "
+                                "constraints."
+                            ),
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Max seconds to wait (30–600, default 240).",
+                        },
+                    },
+                    "required": ["prompt"],
+                },
+                executor="server",
+                side_effects=["filesystem.write", "code.execute"],
+            ),
+        ],
+    )
+
+    async def invoke(self, action: str, args: dict, ctx: InvocationContext) -> Any:
+        if action != "code":
+            return f"error: unknown coder action {action!r}"
+
+        prompt = str(args.get("prompt", "")).strip()
+        if not prompt:
+            return "error: empty prompt"
+        timeout = min(max(int(args.get("timeout", _DEFAULT_TIMEOUT) or _DEFAULT_TIMEOUT),
+                          _MIN_TIMEOUT), _MAX_TIMEOUT)
+
+        bridge = get_worker_bridge()
+        if not bridge.worker_online():
+            return (
+                "Claude Code runs on your Mac via the worker, which isn't connected. "
+                "Start it in a terminal with `scrappy worker`, then ask me again."
+            )
+
+        agent_id = (str(ctx.session_id)[:8] if ctx.session_id else "scrappy")
+        log.info("coder.dispatch", agent_id=agent_id, prompt=prompt[:160])
+        return await bridge.submit(
+            agent_id=agent_id,
+            kind="claude",
+            cmd=prompt,
+            timeout=timeout,
+            task=f"(coder) {prompt[:80]}",
+        )

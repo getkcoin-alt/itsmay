@@ -71,6 +71,8 @@ _TOOL_ACK: dict[str, str] = {
     "memory.save": "Got it.",
     "terminal": "Running that now.",
     "terminal.spawn": "Spinning that up.",
+    "coder": "Getting Claude on it.",
+    "coder.code": "Getting Claude on it.",
     "ask_researcher": "Looking into it.",
     "ask_engineer": "On it.",
     "ask_analyst": "Analyzing.",
@@ -138,7 +140,7 @@ async def stream_chat(client: httpx.AsyncClient, text: str, session_id: str | No
     headers = {"Accept": "text/event-stream"}
     event = "message"
     async with client.stream(
-        "POST", f"{API_BASE}/v1/chat", json=body, headers=headers, timeout=180
+        "POST", f"{API_BASE}/v1/chat", json=body, headers=headers, timeout=600
     ) as resp:
         resp.raise_for_status()
         async for line in resp.aiter_lines():
