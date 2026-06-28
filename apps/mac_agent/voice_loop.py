@@ -270,6 +270,28 @@ def execute_mac_tool(name: str, args: dict) -> str:
             _run_silent(["open", "-a", app])
             return f"opened app: {app}"
 
+        if name == "mac.claude_code":
+            prompt = str(args.get("prompt", "")).strip()
+            if not prompt:
+                return "[mac.claude_code] missing prompt"
+            workdir = os.path.expanduser(
+                str(args.get("dir") or os.environ.get("SCRAPPY_CODE_DIR", "~/scrappy-workspace"))
+            )
+            flags = os.environ.get("SCRAPPY_CLAUDE_FLAGS", "")
+            inner = (
+                f"mkdir -p {shlex.quote(workdir)} && cd {shlex.quote(workdir)} && "
+                f"claude {flags} {shlex.quote(prompt)}"
+            ).strip()
+            script = (
+                f'tell application "Terminal"\nactivate\n'
+                f'do script {json.dumps(inner)}\nend tell'
+            )
+            r = _run_silent(["osascript", "-e", script], capture_output=True, text=True)
+            err = (r.stderr or "").strip()
+            if err:
+                return f"[mac.claude_code] {err}"
+            return f"opened Claude Code in a new Terminal (dir {workdir}) for: {prompt[:60]}"
+
         if name == "mac.open_url":
             url = str(args.get("url", "")).strip()
             if not url:

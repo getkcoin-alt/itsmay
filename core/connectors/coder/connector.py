@@ -34,14 +34,14 @@ class CoderConnector(Connector):
             ToolSpec(
                 name="code",
                 description=(
-                    "Hand a coding or code-generation task to Claude Code (the `claude` "
-                    "CLI) running on Karnveer's Mac, and get its result back. Use this "
-                    "whenever the conversation reaches a point that needs code written, "
-                    "generated, edited, debugged, or a script/file created — instead of "
-                    "writing the code yourself. Give ONE complete, self-contained "
-                    "instruction with all the context Claude needs (it cannot see this "
-                    "conversation). Returns Claude Code's final output. Requires a "
-                    "connected `scrappy worker`; for very long builds prefer terminal.spawn."
+                    "Run Claude Code (the `claude` CLI) HEADLESS on Karnveer's Mac "
+                    "worker and get its final output back into this conversation — no "
+                    "visible window. Use this for quick code generation when you just "
+                    "need the result, or from the text CLI where there's no Mac screen. "
+                    "When Karnveer is at his Mac and should WATCH Claude work in a "
+                    "terminal, prefer mac.claude_code instead. Give ONE complete, "
+                    "self-contained instruction (Claude cannot see this conversation). "
+                    "Requires a connected `scrappy worker`."
                 ),
                 parameters={
                     "type": "object",
