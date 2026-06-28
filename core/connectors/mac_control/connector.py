@@ -86,6 +86,38 @@ _MAC_TOOLS = [
         side_effects=["mac.audio_out"],
     ),
     ToolSpec(
+        name="claude_code",
+        description=(
+            "Open a NEW Terminal window on the Mac and start Claude Code (the "
+            "`claude` CLI) on a coding task — Karnveer watches it work live and can "
+            "jump in. THIS is how you write or change software when he asks you to "
+            "code, build, generate, fix, or refactor anything. YOU author the "
+            "prompt: make it a complete, refined, self-contained brief — what to "
+            "build, the language/framework, the working directory or project, and "
+            "any constraints — because Claude Code cannot see this conversation. "
+            "Prefer this over coder.code whenever Karnveer is at his Mac."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "Complete, polished instruction for Claude Code — written by "
+                        "you, ready to run with no further context."
+                    ),
+                },
+                "dir": {
+                    "type": "string",
+                    "description": "Working directory (default ~/scrappy-workspace).",
+                },
+            },
+            "required": ["prompt"],
+        },
+        executor="client_mac",
+        side_effects=["mac.terminal_open", "code.execute"],
+    ),
+    ToolSpec(
         name="run_applescript",
         description=(
             "Run an arbitrary AppleScript snippet on the user's Mac. POWERFUL — "
