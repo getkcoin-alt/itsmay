@@ -30,6 +30,12 @@ def test_terminal_agent_system_has_honesty_rule():
     assert "fake" in s  # "never fake success"
 
 
+def test_prompts_discourage_reflexive_delegation():
+    # IM-1.4: don't burn a full extra model call on chit-chat.
+    assert "default to answering yourself" in load_system_prompt(voice_mode=False).lower()
+    assert "default to answering yourself" in load_system_prompt(voice_mode=True).lower()
+
+
 def test_agent_result_fallback_is_not_a_fake_completed():
     # The dishonest "(completed)" default is gone; an empty summary must read as
     # "no summary", not as success.
