@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "llama-3.3-70b-versatile"
+    # Sub-agents (terminal agents) run on a cheaper, faster model with its OWN
+    # daily-token budget, so their many iterations don't drain the main model's
+    # quota. Groq's 8b-instant is plenty for running bash and reading output;
+    # heavy coding is delegated to Claude Code, not this model.
+    llm_agent_model: str = "llama-3.1-8b-instant"
     # Max passes through the agentic tool loop per turn (tool call → result →
     # re-ask). Caps how many times Scrappy can chain tools/experts in one reply.
     tool_loop_max_iters: int = 4

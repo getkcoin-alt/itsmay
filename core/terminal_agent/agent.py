@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from core.brain.agent_loop import Done, Token, ToolResult, ToolStart, run_tool_loop
 from core.brain.llm import LLMClient, Message
+from core.config import get_settings
 from core.connectors.base import InvocationContext
 from core.connectors.memory.connector import MemoryConnector
 from core.logging import get_logger
@@ -243,9 +244,10 @@ class TerminalAgent:
         self.status = "running"
         os.makedirs(self.work_dir, exist_ok=True)
 
-        # Each agent owns an isolated LLM client so its streaming calls never
-        # share an httpx connection pool with the parent chat request.
-        own_llm = LLMClient()
+        # Each agent owns an isolated LLM client on the cheaper agent model, so
+        # its many iterations don't drain the main model's daily token budget
+        # (and its streaming never shares an httpx pool with the parent chat).
+        own_llm = LLMClient(model=get_settings().llm_agent_model)
 
         ctx = InvocationContext(
             user_uuid=self.user_uuid,
@@ -269,7 +271,7 @@ class TerminalAgent:
                 router=router,
                 ctx=ctx,
                 temperature=0.3,
-                max_iters=20,
+                max_iters=10,
             ):
                 if isinstance(ev, Token):
                     thought_buf.append(ev.text)
