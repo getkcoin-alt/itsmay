@@ -6,6 +6,7 @@ from typing import Any
 
 from core.connectors.base import Connector, ConnectorManifest, InvocationContext, ToolSpec
 from core.terminal_agent.registry import get_agent_store
+from core.worker.bridge import get_worker_bridge
 
 
 class TerminalConnector(Connector):
@@ -17,9 +18,10 @@ class TerminalConnector(Connector):
             ToolSpec(
                 name="spawn",
                 description=(
-                    "Spawn a new Claude terminal agent that completes a task autonomously using bash. "
-                    "Best for: writing/running code, file processing, git operations, data tasks, "
-                    "installing packages, running tests. Give it a self-contained task description. "
+                    "Spawn a new Claude terminal agent that completes a task "
+                    "autonomously using bash. Best for: writing/running code, file "
+                    "processing, git operations, data tasks, installing packages, "
+                    "running tests. Give it a self-contained task description. "
                     "Returns agent_id — use terminal.status to poll until done."
                 ),
                 parameters={
@@ -55,7 +57,10 @@ class TerminalConnector(Connector):
             ),
             ToolSpec(
                 name="list",
-                description="List recent terminal agents (newest first) with their status and task.",
+                description=(
+                    "List recent terminal agents (newest first) with their status "
+                    "and task."
+                ),
                 parameters={"type": "object", "properties": {}, "required": []},
                 executor="server",
             ),
@@ -71,6 +76,11 @@ class TerminalConnector(Connector):
                 return {"ok": False, "error": "task is required"}
             if ctx.llm is None:
                 return {"ok": False, "error": "LLM not available in context"}
+            # Preflight: where will this agent's commands actually run? With a
+            # connected `scrappy worker` they run on Karnveer's Mac; otherwise
+            # they run in the server container and can't touch his machine. Never
+            # let that happen silently — report it so Scrappy can tell him.
+            worker_connected = get_worker_bridge().worker_online()
             agent = store.spawn(
                 task,
                 ctx.llm,
@@ -78,14 +88,24 @@ class TerminalConnector(Connector):
                 semantic=ctx.semantic,
                 user_uuid=ctx.user_uuid,
             )
+            if worker_connected:
+                where = (
+                    f"It runs on Karnveer's Mac (worker connected). "
+                    f"Call terminal.status('{agent.id}') to check progress."
+                )
+            else:
+                where = (
+                    "WARNING: no Mac worker is connected, so it runs in the SERVER "
+                    "container — it CANNOT touch his Mac (files, apps, browser). If "
+                    "this task needs his machine, tell him to start `scrappy worker` "
+                    f"and try again. Call terminal.status('{agent.id}') for progress."
+                )
             return {
                 "agent_id": agent.id,
                 "status": agent.status,
                 "work_dir": agent.work_dir,
-                "message": (
-                    f"Terminal agent {agent.id} spawned and running. "
-                    f"Call terminal.status('{agent.id}') to check progress and get results."
-                ),
+                "worker_connected": worker_connected,
+                "message": f"Terminal agent {agent.id} spawned. {where}",
             }
 
         if action == "status":
