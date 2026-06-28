@@ -18,6 +18,7 @@ import json
 import os
 import queue
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -349,6 +350,42 @@ def execute_mac_tool(name: str, args: dict) -> str:
         return f"[mac.error] {type(e).__name__}: {e}"
 
 
+# ── live agent watcher ──────────────────────────────────────────
+_watched_agents: set[str] = set()
+_AGENT_ID_RE = re.compile(r'"agent_id"\s*:\s*"([0-9a-fA-F]{6,16})"')
+
+
+def _open_agent_watcher(agent_id: str) -> None:
+    """Open a Terminal window on the Mac that streams `scrappy watch <agent_id>`
+    so Karnveer can watch the spawned agent think and run commands live."""
+    if not agent_id or agent_id in _watched_agents:
+        return
+    _watched_agents.add(agent_id)
+    if os.environ.get("SCRAPPY_NO_WATCH_WINDOW"):
+        return
+    scrappy_bin = Path(sys.executable).parent / "scrappy"
+    cwd = os.getcwd()
+    inner = (
+        f"cd {shlex.quote(cwd)} && "
+        f"{shlex.quote(str(scrappy_bin))} watch {shlex.quote(agent_id)}"
+    )
+    script = f'tell application "Terminal"\nactivate\ndo script {json.dumps(inner)}\nend tell'
+    try:
+        _run_silent(["osascript", "-e", script])
+        print(f"  🪟  opened a Terminal watching agent {agent_id}", flush=True)
+    except Exception as e:
+        print(f"  [watch window failed] {e}", file=sys.stderr)
+
+
+def _maybe_open_watcher_from_status(payload: dict) -> None:
+    """If a status event reports a terminal.spawn, pop open a live watch window."""
+    if payload.get("tool") != "terminal.spawn":
+        return
+    m = _AGENT_ID_RE.search(str(payload.get("result", "")))
+    if m:
+        _open_agent_watcher(m.group(1))
+
+
 # ── phrase splitter ─────────────────────────────────────────────
 def pop_phrase(buf: str) -> tuple[str | None, str]:
     """Pop the first phrase ending at a natural break (. ! ? , ; : — \\n).
@@ -486,6 +523,10 @@ async def turn(
                 try:
                     payload = json.loads(data)
                     print(f"\n  ✓ {payload.get('tool', '?')}", flush=True)
+                    # When Scrappy spawns an agent, pop open a Terminal window on
+                    # the Mac streaming its live work, so it's visible — not buried
+                    # on the server.
+                    await asyncio.to_thread(_maybe_open_watcher_from_status, payload)
                 except json.JSONDecodeError:
                     pass
             elif evt == "tool_call":
