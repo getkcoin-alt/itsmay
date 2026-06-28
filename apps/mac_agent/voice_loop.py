@@ -60,6 +60,10 @@ APPROVAL_REQUIRED = {"mac.run_applescript"}
 # Module-level watcher — only one tab watched at a time.
 _active_watcher: TabWatcher | None = None
 
+# The one live Claude Code session Scrappy is conducting (Terminal window id).
+# Follow-up prompts are typed into this window instead of opening a new one.
+_claude_session: dict[str, str | None] = {"window_id": None}
+
 VAD_AGGRESSIVENESS = int(os.environ.get("VAD_AGGRESSIVENESS", "2"))
 VAD_SILENCE_MS = int(os.environ.get("VAD_SILENCE_MS", "700"))
 
@@ -254,6 +258,18 @@ def _run_silent(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=False, **kw)
 
 
+def _terminal_window_exists(window_id: str | None) -> bool:
+    """True if a Terminal window with this id is still open."""
+    if not window_id or not str(window_id).isdigit():
+        return False
+    script = f"tell application \"Terminal\" to return (exists window id {window_id})"
+    try:
+        r = _run_silent(["osascript", "-e", script], capture_output=True, text=True)
+    except Exception:
+        return False
+    return (r.stdout or "").strip().lower() == "true"
+
+
 def execute_mac_tool(name: str, args: dict) -> str:
     """Run a `mac.*` or `browser.*` tool locally and return a short status.
 
@@ -274,6 +290,22 @@ def execute_mac_tool(name: str, args: dict) -> str:
             prompt = str(args.get("prompt", "")).strip()
             if not prompt:
                 return "[mac.claude_code] missing prompt"
+
+            # Continue the live session: type the follow-up into the existing
+            # Claude Code window instead of opening a second one.
+            winid = _claude_session.get("window_id")
+            if winid and _terminal_window_exists(winid):
+                send = (
+                    f"tell application \"Terminal\" to do script "
+                    f"{json.dumps(prompt)} in window id {winid}"
+                )
+                r = _run_silent(["osascript", "-e", send], capture_output=True, text=True)
+                err = (r.stderr or "").strip()
+                if err:
+                    return f"[mac.claude_code] {err}"
+                return f"sent to the open Claude Code session (window {winid}): {prompt[:60]}"
+
+            # No live session — start one and remember its window.
             workdir = os.path.expanduser(
                 str(args.get("dir") or os.environ.get("SCRAPPY_CODE_DIR", "~/scrappy-workspace"))
             )
@@ -284,13 +316,18 @@ def execute_mac_tool(name: str, args: dict) -> str:
             ).strip()
             script = (
                 f'tell application "Terminal"\nactivate\n'
-                f'do script {json.dumps(inner)}\nend tell'
+                f'do script {json.dumps(inner)}\n'
+                f'return id of front window as string\nend tell'
             )
             r = _run_silent(["osascript", "-e", script], capture_output=True, text=True)
             err = (r.stderr or "").strip()
             if err:
                 return f"[mac.claude_code] {err}"
-            return f"opened Claude Code in a new Terminal (dir {workdir}) for: {prompt[:60]}"
+            _claude_session["window_id"] = (r.stdout or "").strip() or None
+            return (
+                f"started a Claude Code session (window {_claude_session['window_id']}, "
+                f"dir {workdir}) for: {prompt[:60]}"
+            )
 
         if name == "mac.open_url":
             url = str(args.get("url", "")).strip()

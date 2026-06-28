@@ -88,14 +88,17 @@ _MAC_TOOLS = [
     ToolSpec(
         name="claude_code",
         description=(
-            "Open a NEW Terminal window on the Mac and start Claude Code (the "
-            "`claude` CLI) on a coding task — Karnveer watches it work live and can "
-            "jump in. THIS is how you write or change software when he asks you to "
-            "code, build, generate, fix, or refactor anything. YOU author the "
-            "prompt: make it a complete, refined, self-contained brief — what to "
-            "build, the language/framework, the working directory or project, and "
-            "any constraints — because Claude Code cannot see this conversation. "
-            "Prefer this over coder.code whenever Karnveer is at his Mac."
+            "Send a coding instruction to your ONE Claude Code session on the Mac. "
+            "The FIRST call opens a Terminal window running Claude Code (the `claude` "
+            "CLI) that Karnveer watches and can type into; EVERY later call types the "
+            "new instruction into that SAME session — so you are conducting one "
+            "ongoing Claude Code, NOT opening a new window each time. Use it both to "
+            "start the work and to continue, redirect, or answer its questions. THIS "
+            "is how you write or change software when he asks you to code, build, "
+            "generate, fix, or refactor. YOU author the prompt: a complete, refined, "
+            "self-contained brief (Claude Code cannot see this conversation). There's "
+            "no return value — you're driving a live session he participates in. For "
+            "a headless one-shot result with no window, use coder.code instead."
         ),
         parameters={
             "type": "object",
@@ -129,7 +132,10 @@ _MAC_TOOLS = [
             "properties": {
                 "script": {
                     "type": "string",
-                    "description": "AppleScript source. Avoid `osascript` shell-out — just pass the script body.",
+                    "description": (
+                        "AppleScript source. Avoid `osascript` shell-out — just pass "
+                        "the script body."
+                    ),
                 },
             },
             "required": ["script"],
