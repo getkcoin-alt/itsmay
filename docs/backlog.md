@@ -9,9 +9,14 @@ run in parallel once Epic 1's P0s are green.
 
 ---
 
-## Epic 1 — One workflow, flawless + honest
+## Epic 1 — One workflow, flawless + honest ✅ COMPLETE
 *Goal: earn the brand (#4), unlock the need (#2). The voice → Claude Code → memory
 loop must never break or lie.*
+
+All shipped: honest mode (#4), worker preflight (#5), graceful rate-limit voice
+(#6), curb-delegation (IM-1.4), golden-path checklist (`docs/golden-path.md`), plus
+one-persistent-Claude-Code-session. The core loop no longer lies, runs Mac work
+in the cloud silently, or dumps raw rate-limit errors.
 
 ### IM-1.1 · Honest mode: stop faking non-doable tasks · **P0 · M**
 Scrappy currently spawns shell agents for things that aren't shell-doable (e.g.
