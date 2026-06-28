@@ -565,7 +565,18 @@ async def turn(
             elif evt == "done":
                 break
             elif evt == "error":
-                print(f"\n[chat error] {data}", file=sys.stderr)
+                # Speak a calm message instead of dying on a raw error blob.
+                speak = "Sorry, something glitched on my end. Try that again."
+                try:
+                    payload = json.loads(data)
+                    speak = payload.get("speak") or speak
+                    print(
+                        f"\n[{payload.get('kind', 'error')}] {payload.get('error', '')[:200]}",
+                        file=sys.stderr,
+                    )
+                except json.JSONDecodeError:
+                    print(f"\n[chat error] {data}", file=sys.stderr)
+                tts_tasks.append(asyncio.create_task(synth(speak)))
                 break
     except httpx.HTTPStatusError as e:
         body = (e.response.text or "")[:300] if e.response is not None else ""
