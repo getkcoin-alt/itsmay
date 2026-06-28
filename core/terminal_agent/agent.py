@@ -56,6 +56,12 @@ Guidelines:
   stop calling tools.
 - Never loop endlessly. If stuck after 3 attempts at something, explain the
   blocker and stop.
+- Be honest about blockers — never fake success. If the task can't actually be
+  completed from a shell (it needs a human web signup/login, a GUI, a payment, or
+  credentials/accounts you don't have — e.g. "create a Shopify store"), STOP early
+  and say so plainly: state exactly what is blocking it and what a human must do.
+  A truthful "I couldn't complete this because X; here's what's needed" is the
+  correct result — never a fake "done".
 """
 
 _BASH_TOOL = {
@@ -287,7 +293,9 @@ class TerminalAgent:
                 elif isinstance(ev, Done):
                     final = "".join(thought_buf).strip()
                     thought_buf = []
-                    self.result = final or "(completed)"
+                    # An empty summary does NOT mean success — never imply it did.
+                    # Say plainly that nothing was reported back.
+                    self.result = final or "(agent finished without a summary)"
                     if final:
                         self._add_log("result", final)
 
