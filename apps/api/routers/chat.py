@@ -29,6 +29,43 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/v1", tags=["chat"])
 
 
+def _classify_chat_error(exc: Exception, llm: LLMClient) -> dict:
+    """Turn a raw stream exception into a structured error event with a calm,
+    *speakable* message — so the voice client can say it instead of dumping a
+    stack trace. Rate-limit messages are tailored to the live key-pool state."""
+    msg = str(exc)
+    low = msg.lower()
+    payload: dict = {"error": msg}
+
+    rate_limited = ("rate limit" in low) or ("429" in low) or ("unavailable after" in low)
+    if rate_limited:
+        payload["kind"] = "rate_limit"
+        try:
+            keys = llm.keys.status().get("keys", [])
+            total = len(keys)
+            active = sum(1 for k in keys if k.get("active"))
+        except Exception:
+            total, active = 0, 0
+        if total <= 1:
+            payload["speak"] = (
+                "I'm rate-limited right now — my key is tapped out. Add a couple "
+                "more keys to LLM_API_KEY, or give it a little time."
+            )
+        elif active == 0:
+            payload["speak"] = (
+                f"All {total} of my keys are rate-limited right now — they reset on "
+                "Groq's daily cycle. Add another key, or give it a bit."
+            )
+        else:
+            payload["speak"] = (
+                "I hit a rate limit but I'm rotating to another key — give me a second."
+            )
+    else:
+        payload["kind"] = "error"
+        payload["speak"] = "Something glitched on my end — say that again?"
+    return payload
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: UUID | None = None
@@ -169,7 +206,7 @@ async def chat(
                     break
         except Exception as e:
             log.exception("chat.stream_failed", err=str(e))
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            yield {"event": "error", "data": json.dumps(_classify_chat_error(e, llm))}
             return
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
