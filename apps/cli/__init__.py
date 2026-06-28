@@ -219,6 +219,25 @@ async def _status() -> None:
             print(f"  {mark(count > 0)} memory — {count} facts stored{extra}")
         except Exception:
             print(f"  {mark(None)} memory — unknown")
+
+        # LLM key pool — each key: active / cooling-down / remaining tokens.
+        pool = (hd.get("llm") or {}).get("key_pool") or {}
+        keys = pool.get("keys") or []
+        if keys:
+            active = sum(1 for k in keys if k.get("active"))
+            print(f"  {mark(active > 0)} keys — {active}/{len(keys)} active")
+            for k in keys:
+                idx = k.get("idx", "?")
+                tok = k.get("remaining_tokens")
+                tok_s = f"{tok:,} tokens left" if isinstance(tok, int) else "tokens unknown"
+                if k.get("active"):
+                    print(f"      #{idx} {_GREEN}● active{_RESET}      {_DIM}{tok_s}{_RESET}")
+                else:
+                    cd = k.get("cooldown_sec_remaining", 0) or 0
+                    print(f"      #{idx} {_YELLOW}◐ cooling{_RESET}    "
+                          f"{_DIM}{cd:.0f}s left · {tok_s}{_RESET}")
+        elif (hd.get("llm") or {}).get("ok"):
+            print(f"  {mark(None)} keys — no pool reported (single key or none)")
     print()
 
 
