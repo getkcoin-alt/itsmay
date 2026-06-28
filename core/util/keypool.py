@@ -94,6 +94,16 @@ class KeyPool:
         log.warning("keypool.all_gated", label=self.label, soonest_in=s.cooldown_until - now)
         return s.key
 
+    def seconds_until_available(self) -> float:
+        """0.0 if any key is usable right now, else seconds until the soonest one
+        comes off cooldown. Lets callers rotate instantly to a fresh key and only
+        pause when every key is exhausted."""
+        if not self.states:
+            return 0.0
+        now = time.time()
+        soonest = min(s.cooldown_until for s in self.states)
+        return max(0.0, soonest - now)
+
     def update_from_headers(self, headers) -> None:
         """Record remaining quota off the response so we can pre-emptively rotate."""
         if not self.states:

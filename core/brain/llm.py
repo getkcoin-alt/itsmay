@@ -115,6 +115,20 @@ log = get_logger(__name__)
 Role = Literal["system", "user", "assistant", "tool"]
 Provider = Literal["openai", "ollama"]
 
+# Key pools shared by the comma-separated key string, so every LLMClient built
+# from the configured LLM_API_KEY (the chat request AND each spawned agent /
+# expert in this process) sees the same cooldown state. When one component
+# exhausts a key, the others skip it instead of re-hitting a known-dead key.
+_SHARED_POOLS: dict[str, KeyPool] = {}
+
+
+def _shared_key_pool(csv: str, label: str) -> KeyPool:
+    pool = _SHARED_POOLS.get(csv)
+    if pool is None:
+        pool = KeyPool.from_csv(csv, label=label)
+        _SHARED_POOLS[csv] = pool
+    return pool
+
 
 @dataclass(slots=True)
 class Message:
@@ -186,7 +200,12 @@ class LLMClient:
         self.base_url = (base_url or s.llm_base_url).rstrip("/")
         self.model = model or s.llm_model
         self.keep_alive = s.ollama_keep_alive
-        self.keys = KeyPool.from_csv(api_key if api_key is not None else s.llm_api_key, label="llm")
+        # Explicit keys (tests, sub-clients) get a private pool; the default
+        # configured keys get a process-shared pool so cooldowns are global.
+        if api_key is not None:
+            self.keys = KeyPool.from_csv(api_key, label="llm")
+        else:
+            self.keys = _shared_key_pool(s.llm_api_key, "llm")
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
 
     async def aclose(self) -> None:
@@ -237,13 +256,16 @@ class LLMClient:
             resp = await self._client.send(req, stream=True)
             if resp.status_code == 429:
                 retry_after = parse_retry_after(resp.headers.get("retry-after"))
-                self.keys.mark_rate_limited(retry_after)
                 last_status = 429
                 last_body = await resp.aread()  # read BEFORE closing
                 await resp.aclose()
+                self.keys.mark_rate_limited(retry_after)  # cools this key, advances
                 if attempt < max_tries - 1:
-                    # Brief capped backoff (rotates key too if the pool has more).
-                    await asyncio.sleep(min(retry_after or 1.0, 5.0))
+                    # Rotate to the next key immediately; only pause if EVERY key
+                    # is cooling down (then briefly, capped).
+                    wait = self.keys.seconds_until_available()
+                    if wait > 0:
+                        await asyncio.sleep(min(wait, 5.0))
                 continue
             if resp.status_code == 401 and self.keys.size > 1:
                 self.keys.mark_invalid()
