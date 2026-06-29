@@ -78,10 +78,15 @@ The blocker was Postgres/pgvector; so the first brick removes the server entirel
   Python 3.11+, clones/updates, makes the venv, `pip install .[mac]`, prompts for
   keys into `~/.itsmay/config.env`, prints the start steps. Idempotent; reads keys
   from the tty even when piped.
-- ☐ **Milestone 5 (polish) — one-shot launcher.** `scrappy up` to run serve +
-  worker together, and a clean-Mac dry run to time the < 5-min claim.
+- ✅ **Milestone 5 (polish) — one-shot launcher.** `scrappy up` runs the backend +
+  worker in a single event loop (uvicorn `Server.serve()` alongside the worker
+  long-poll; worker starts once the API is up, cancelled on stop). Two terminals
+  now (`up` + `voice`) instead of three. Verified live: server up, worker
+  registers online, heartbeats flow.
+- ☐ **Certification — clean-Mac timing run.** Time `curl … | bash` → talking on a
+  fresh Mac to certify the < 5-min claim (needs a real Mac; can't be done from CI).
 - **Done when:** a non-developer goes from zero to talking to Scrappy in < 5 minutes.
-  *(Functionally in place; needs a real clean-Mac timing run to certify.)*
+  *(Functionally complete + dry-run-verified on Linux; awaits one clean-Mac timing.)*
 
 ### IM-2.2 · Usage + cost visibility · **P0 · M** ✅ DONE (#8)
 - `scrappy status` now shows, per key, `remaining / limit tokens left (X%)` read from

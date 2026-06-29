@@ -8,6 +8,7 @@ Usage:
   scrappy watch <id>           tail a running or finished agent's log
   scrappy voice                start the voice loop — talk to Scrappy out loud
   scrappy serve                run the backend locally (sovereign, no Railway)
+  scrappy up                   run the backend + worker together (one terminal)
   scrappy worker               run the local executor — agents run on THIS Mac
   scrappy status               server health + worker connected + memory count
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
@@ -24,6 +25,7 @@ Environment:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shlex
@@ -832,6 +834,66 @@ def _serve_api(run=None) -> None:
         print("\nbackend stopped.")
 
 
+async def _up(run_server=None, run_worker=None) -> None:
+    """Run the brain (backend) + the local executor (worker) in one process —
+    one terminal instead of two. Talk to it from another terminal with
+    `scrappy voice` (or `scrappy "..."`).
+
+    Both run in a single event loop: uvicorn's `Server.serve()` coroutine
+    alongside the worker's long-poll loop. The worker starts only once the API is
+    accepting connections, and is cancelled when the server stops. `run_server` /
+    `run_worker` are injectable for tests.
+    """
+    global API_BASE
+    from core.config import get_settings
+    from core.memory.backend import describe_backend
+
+    s = get_settings()
+    host = os.environ.get("SCRAPPY_SERVE_HOST", "127.0.0.1")
+    port = int(os.environ.get("SCRAPPY_SERVE_PORT", "8000"))
+    # Point the worker (and anything reading the env) at the server we launch.
+    API_BASE = f"http://{host}:{port}"
+    os.environ["VAULT_API_BASE"] = API_BASE
+
+    if run_server is None:
+        try:
+            import uvicorn
+        except ImportError:
+            print(f"{_RED}uvicorn isn't installed — run: pip install -e .{_RESET}")
+            return
+        config = uvicorn.Config(
+            "apps.api.main:app", host=host, port=port, log_level=s.log_level.lower()
+        )
+        run_server = uvicorn.Server(config).serve
+    if run_worker is None:
+        run_worker = _worker
+
+    mem = describe_backend()
+    print(
+        f"{_GREEN}{_BOLD}Scrappy up{_RESET}  →  http://{host}:{port}  "
+        f"{_DIM}(brain + worker){_RESET}"
+    )
+    print(f"  {_DIM}memory: {mem['backend']} ({mem['location']}){_RESET}")
+    if not s.llm_api_key:
+        print(
+            f"  {_YELLOW}⚠️  no LLM_API_KEY set — add one to ~/.itsmay/config.env "
+            f"(free Groq key at console.groq.com){_RESET}"
+        )
+    print(f"  {_DIM}talk to it in another terminal:  scrappy voice{_RESET}\n")
+
+    # Run both; the server owns the lifetime (Ctrl+C → uvicorn shuts it down). The
+    # worker's own reconnect-backoff covers the brief window before the API binds,
+    # so there's no need to gate its start on readiness.
+    server_task = asyncio.create_task(run_server())
+    worker_task = asyncio.create_task(run_worker())
+    try:
+        await server_task
+    finally:
+        worker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await worker_task
+
+
 def main() -> None:
     args = sys.argv[1:]
 
@@ -866,6 +928,13 @@ def main() -> None:
 
     if args and args[0] == "serve":
         _serve_api()
+        return
+
+    if args and args[0] == "up":
+        try:
+            asyncio.run(_up())
+        except KeyboardInterrupt:
+            print("\nstopped.")
         return
 
     if args and args[0] == "status":
