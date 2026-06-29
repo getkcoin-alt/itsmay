@@ -7,6 +7,7 @@ Usage:
   scrappy agents               list recent agents with status
   scrappy watch <id>           tail a running or finished agent's log
   scrappy voice                start the voice loop — talk to Scrappy out loud
+  scrappy serve                run the backend locally (sovereign, no Railway)
   scrappy worker               run the local executor — agents run on THIS Mac
   scrappy status               server health + worker connected + memory count
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
@@ -33,7 +34,11 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+# Repo-local .env (dev), then the installed user config. load_dotenv never
+# overrides an already-set var, so a real `export` and dev's .env both win over
+# ~/.itsmay/config.env — which is the zero-export default for installed users.
 load_dotenv()
+load_dotenv(Path.home() / ".itsmay" / "config.env")
 
 API_BASE = os.environ.get("VAULT_API_BASE", "http://127.0.0.1:8000")
 API_KEY = os.environ.get("VAULT_API_KEY", "")
@@ -787,6 +792,46 @@ async def _repl() -> None:
         print()
 
 
+def _serve_api(run=None) -> None:
+    """Run the backend on THIS machine — the sovereign, no-Railway path.
+
+    Binds localhost by default (single-operator, not exposed on the LAN); memory
+    uses the local SQLite file unless a DATABASE_URL is configured. `run` is the
+    server entrypoint (defaults to uvicorn.run) — injectable for tests.
+    """
+    from core.config import get_settings
+    from core.memory.backend import describe_backend
+
+    if run is None:
+        try:
+            import uvicorn
+
+            run = uvicorn.run
+        except ImportError:
+            print(f"{_RED}uvicorn isn't installed — run: pip install -e .{_RESET}")
+            return
+
+    s = get_settings()
+    host = os.environ.get("SCRAPPY_SERVE_HOST", "127.0.0.1")
+    port = int(os.environ.get("SCRAPPY_SERVE_PORT", "8000"))
+    mem = describe_backend()
+    print(f"{_GREEN}{_BOLD}Scrappy backend{_RESET}  →  http://{host}:{port}")
+    print(f"  {_DIM}memory: {mem['backend']} ({mem['location']}){_RESET}")
+    if not s.llm_api_key:
+        print(
+            f"  {_YELLOW}⚠️  no LLM_API_KEY set — add one to ~/.itsmay/config.env "
+            f"(free Groq key at console.groq.com){_RESET}"
+        )
+    print(
+        f"  {_DIM}other terminals use the default "
+        f"VAULT_API_BASE=http://{host}:{port}{_RESET}\n"
+    )
+    try:
+        run("apps.api.main:app", host=host, port=port, log_level=s.log_level.lower())
+    except KeyboardInterrupt:
+        print("\nbackend stopped.")
+
+
 def main() -> None:
     args = sys.argv[1:]
 
@@ -817,6 +862,10 @@ def main() -> None:
             asyncio.run(_worker())
         except KeyboardInterrupt:
             print("\nworker stopped.")
+        return
+
+    if args and args[0] == "serve":
+        _serve_api()
         return
 
     if args and args[0] == "status":

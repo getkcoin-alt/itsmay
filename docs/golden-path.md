@@ -8,29 +8,30 @@ loop isn't trustworthy yet — fix it before widening.
 
 ## Setup (once)
 
+One command — installs everything, asks for your Groq key, writes
+`~/.itsmay/config.env`. Fully local: no Railway, no Postgres, no Docker.
+
 ```bash
-cd ~/itsmay
-git checkout main && git pull
-source .venv/bin/activate
-pip install -e ".[mac]"
-export VAULT_API_BASE=https://<your-app>.up.railway.app
-export VAULT_API_KEY=<key>
-# optional: let Claude Code edit without prompts, and stack Groq keys
-export SCRAPPY_CLAUDE_FLAGS="--permission-mode acceptEdits"
-# (set LLM_API_KEY="k1,k2,k3" in Railway for headroom)
-scrappy seed        # one-time: load long-term memory
+curl -fsSL https://raw.githubusercontent.com/getkcoin-alt/itsmay/main/scripts/install.sh | bash
 ```
+
+(Stack multiple Groq keys for headroom: `LLM_API_KEY=k1,k2,k3` in
+`~/.itsmay/config.env`.)
 
 ## The golden path (the demo)
 
-Two terminals, venv active in both.
+Three terminals, venv active in each (`cd ~/itsmay && source .venv/bin/activate`).
 
 ```bash
-# Terminal 1 — the executor on your Mac (leave running):
+# Terminal 1 — the brain, on your Mac (sovereign; no cloud):
+scrappy serve             # memory: sqlite (local)
+
+# Terminal 2 — the executor on your Mac (leave running):
 scrappy worker            # → ✓ connected — waiting for tasks
 
-# Terminal 2 — confirm everything's green, then talk:
-scrappy status            # ✓ api/llm/embedder · ✓ mac worker · ✓ memory · keys N/N active
+# Terminal 3 — confirm everything's green, seed once, then talk:
+scrappy status            # ✓ api/llm/embedder · ✓ mac worker · ✓ memory · sqlite (local) · keys
+scrappy seed              # one-time: load long-term memory
 scrappy voice             # hands-free; just talk
 ```
 
@@ -46,9 +47,10 @@ Then, by voice:
 
 ## Regression checklist (run on a clean Mac)
 
-Onboarding
-- [ ] `pip install -e ".[mac]"` succeeds; `scrappy voice` starts hands-free (no ENTER per turn).
-- [ ] `scrappy status` shows ✓ api/llm/embedder, worker state, memory count, and per-key health.
+Onboarding (IM-2.1 / #7)
+- [ ] `curl … install.sh | bash` on a clean Mac: zero → `scrappy status` green in < 5 min, no manual venv/keys/Railway.
+- [ ] `scrappy serve` starts the local backend; `scrappy status` shows memory · **sqlite (local)** (no Postgres/Docker).
+- [ ] `scrappy voice` starts hands-free (no ENTER per turn); per-key token budget + ⚠️ low show in `scrappy status`.
 
 Honest mode (IM-1.1 / #4)
 - [ ] "Set up Shopify for me" → Scrappy says it needs a human signup and offers to open the page / build the automatable parts. **No** theatre-acting agent, **no** fake "done."

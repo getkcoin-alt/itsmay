@@ -68,14 +68,20 @@ The blocker was Postgres/pgvector; so the first brick removes the server entirel
   there's no `DATABASE_URL` (Railway keeps Postgres, untouched). Surfaced in
   `/v1/health` + `scrappy status` ("memory · sqlite (local)"). 14 tests — the first
   memory path that runs in CI.
-- ☐ **Milestone 2 — local backend launch.** `scrappy serve` (uvicorn on
-  127.0.0.1:8000) + default `VAULT_API_BASE` to localhost, so there's no Railway.
-- ☐ **Milestone 3 — config from a file.** Read keys from `~/.itsmay/config.env`
-  (Groq + ElevenLabs) instead of manual `export`s.
-- ☐ **Milestone 4 — the installer.** `install.sh` (`curl | bash`): check Python,
-  make venv, `pip install .[mac]`, prompt for keys, write config, seed memory, print
-  how to start.
+- ✅ **Milestone 2 — local backend launch.** `scrappy serve` runs uvicorn on
+  127.0.0.1:8000 (localhost-bound, sovereign); `VAULT_API_BASE` already defaults to
+  localhost. Prints the live memory backend + warns if no key is set.
+- ✅ **Milestone 3 — config from a file.** Settings + CLI both read
+  `~/.itsmay/config.env` (Groq + ElevenLabs) — real env vars still win, so Railway
+  is unaffected. `config.env.example` documents every key.
+- ✅ **Milestone 4 — the installer.** `scripts/install.sh` (`curl | bash`): finds
+  Python 3.11+, clones/updates, makes the venv, `pip install .[mac]`, prompts for
+  keys into `~/.itsmay/config.env`, prints the start steps. Idempotent; reads keys
+  from the tty even when piped.
+- ☐ **Milestone 5 (polish) — one-shot launcher.** `scrappy up` to run serve +
+  worker together, and a clean-Mac dry run to time the < 5-min claim.
 - **Done when:** a non-developer goes from zero to talking to Scrappy in < 5 minutes.
+  *(Functionally in place; needs a real clean-Mac timing run to certify.)*
 
 ### IM-2.2 · Usage + cost visibility · **P0 · M** ✅ DONE (#8)
 - `scrappy status` now shows, per key, `remaining / limit tokens left (X%)` read from
