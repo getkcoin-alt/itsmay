@@ -20,20 +20,20 @@ curl -fsSL https://raw.githubusercontent.com/getkcoin-alt/itsmay/main/scripts/in
 
 ## The golden path (the demo)
 
-Three terminals, venv active in each (`cd ~/itsmay && source .venv/bin/activate`).
+Two terminals, venv active in each (`cd ~/itsmay && source .venv/bin/activate`).
 
 ```bash
-# Terminal 1 — the brain, on your Mac (sovereign; no cloud):
-scrappy serve             # memory: sqlite (local)
+# Terminal 1 — the brain + executor on your Mac, together (sovereign; no cloud):
+scrappy up                # backend + worker in one · memory: sqlite (local)
 
-# Terminal 2 — the executor on your Mac (leave running):
-scrappy worker            # → ✓ connected — waiting for tasks
-
-# Terminal 3 — confirm everything's green, seed once, then talk:
+# Terminal 2 — confirm everything's green, seed once, then talk:
 scrappy status            # ✓ api/llm/embedder · ✓ mac worker · ✓ memory · sqlite (local) · keys
 scrappy seed              # one-time: load long-term memory
 scrappy voice             # hands-free; just talk
 ```
+
+(Prefer them apart? `scrappy serve` and `scrappy worker` still run as separate
+processes.)
 
 Then, by voice:
 1. "Build me a CLI that lists my ten biggest files in Downloads."
