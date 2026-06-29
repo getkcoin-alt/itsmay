@@ -1,11 +1,18 @@
 from datetime import date
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Installed users keep their keys in ~/.itsmay/config.env (written by the
+    # installer); a repo-local .env overrides it for dev. Real environment
+    # variables still win over both — so Railway's injected env is unaffected.
+    model_config = SettingsConfigDict(
+        env_file=(str(Path.home() / ".itsmay" / "config.env"), ".env"),
+        extra="ignore",
+    )
 
     # ── Server ────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"
