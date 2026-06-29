@@ -247,8 +247,11 @@ async def health(
     llm: LLMClient = Depends(get_llm),
     embedder: Embedder = Depends(get_embedder),
 ) -> dict:
+    from core.memory.backend import describe_backend
+
     return {
         "api": "ok",
         "llm": await llm.health(),
         "embedder": await embedder.health(),
+        "memory": describe_backend(),
     }

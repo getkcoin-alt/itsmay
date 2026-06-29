@@ -165,6 +165,17 @@ class SemanticStore:
                 "SELECT count(*) FROM memories WHERE user_id = $1", user_id
             )
 
+    async def content_exists(self, user_id: UUID, content: str) -> bool:
+        """Exact-text dedup check, used by seeding to stay idempotent."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM memories WHERE user_id = $1 AND content = $2 LIMIT 1",
+                user_id,
+                content,
+            )
+            return row is not None
+
     async def delete(self, user_id: UUID, memory_id: UUID) -> bool:
         """Delete one memory. Returns True if a row was removed."""
         pool = await get_pool()

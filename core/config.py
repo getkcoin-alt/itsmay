@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     # Railway sets DATABASE_URL on the service; if present, it overrides the parts above.
     database_url: str | None = None
 
+    # ── Memory backend ────────────────────────────────────────────
+    # "auto" → Postgres+pgvector when DATABASE_URL is set (the Railway/cloud
+    # path), else a local SQLite file. SQLite is the sovereign default for
+    # `scrappy` running entirely on your machine: one file, no server, no Docker,
+    # brute-force cosine search (fine at single-operator scale). Force with
+    # "postgres" or "sqlite".
+    memory_backend: str = "auto"
+    sqlite_path: str = "~/.itsmay/memory.db"
+
     # ── LLM (chat) ────────────────────────────────────────────────
     # provider: "openai" (any OpenAI-compatible endpoint — Groq, OpenRouter, …) or "ollama"
     llm_provider: str = "openai"
