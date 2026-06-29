@@ -31,6 +31,8 @@ class _KeyState:
     cooldown_until: float = 0.0
     remaining_requests: int | None = None
     remaining_tokens: int | None = None
+    limit_tokens: int | None = None
+    reset_tokens: str | None = None
     last_used: float = 0.0
     last_status: int | None = None
 
@@ -105,12 +107,20 @@ class KeyPool:
         return max(0.0, soonest - now)
 
     def update_from_headers(self, headers) -> None:
-        """Record remaining quota off the response so we can pre-emptively rotate."""
+        """Record remaining quota off the response so we can pre-emptively rotate.
+
+        Groq returns the full set: x-ratelimit-{remaining,limit}-{requests,tokens}
+        plus x-ratelimit-reset-tokens (e.g. "7m12s"). We keep remaining + limit so
+        callers can show "% of today's budget left", and the reset window so they
+        can say when it refills.
+        """
         if not self.states:
             return
         s = self.states[self.idx]
         rr = headers.get("x-ratelimit-remaining-requests")
         rt = headers.get("x-ratelimit-remaining-tokens")
+        lt = headers.get("x-ratelimit-limit-tokens")
+        reset = headers.get("x-ratelimit-reset-tokens")
         if rr is not None:
             try:
                 s.remaining_requests = int(float(rr))
@@ -121,6 +131,13 @@ class KeyPool:
                 s.remaining_tokens = int(float(rt))
             except (TypeError, ValueError):
                 pass
+        if lt is not None:
+            try:
+                s.limit_tokens = int(float(lt))
+            except (TypeError, ValueError):
+                pass
+        if reset:
+            s.reset_tokens = str(reset)
 
     def mark_rate_limited(self, retry_after_sec: float | None = None) -> None:
         if not self.states:
@@ -159,6 +176,8 @@ class KeyPool:
                     "cooldown_sec_remaining": max(0.0, s.cooldown_until - now),
                     "remaining_requests": s.remaining_requests,
                     "remaining_tokens": s.remaining_tokens,
+                    "limit_tokens": s.limit_tokens,
+                    "reset_tokens": s.reset_tokens,
                     "last_status": s.last_status,
                 }
                 for i, s in enumerate(self.states)

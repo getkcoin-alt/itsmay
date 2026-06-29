@@ -62,10 +62,13 @@ Today onboarding needs a venv, API keys, and Railway knowledge — a developer's
   packaged app). Spike both, pick one.
 - **Done when:** a non-developer can go from zero to talking to Scrappy in < 5 minutes.
 
-### IM-2.2 · Usage + cost visibility · **P0 · M**
-- Track per-day token usage per model + a cost estimate; show it in `scrappy status`
-  (extend the key-pool line) and warn before exhaustion.
-- **Done when:** the user can see "X% of today's budget used" before they hit the wall.
+### IM-2.2 · Usage + cost visibility · **P0 · M** ✅ DONE (#8)
+- `scrappy status` now shows, per key, `remaining / limit tokens left (X%)` read from
+  Groq's own rate-limit headers, plus a ⚠️ low flag and a headline warning under 15%
+  of the daily token budget — accurate and restart-proof (no flaky in-process meter).
+- **Done when:** the user can see "X% of today's budget left" before they hit the wall. ✓
+- *Note:* the meaningful budget on Groq's free tier is the tokens-per-day cap (shown),
+  not a dollar figure ($0 on free tier); a real cost estimate lands with paid tiers.
 
 ### IM-2.3 · Route experts to the cheap model too · **P1 · S**
 Finish the fan-out cost cut started by routing terminal agents to 8b.
@@ -117,8 +120,8 @@ stateless lab apps don't have.*
 ---
 
 ## Right-now shortlist (the next 5 things, in order)
-1. **IM-1.1** Honest mode
-2. **IM-1.3** Graceful rate-limit voice UX
-3. **IM-1.2** Worker preflight
-4. **IM-2.2** Usage + cost visibility
-5. **IM-2.1** Kill install friction *(start the spike in parallel — it's the long pole)*
+1. ~~**IM-1.1** Honest mode~~ ✅
+2. ~~**IM-1.3** Graceful rate-limit voice UX~~ ✅
+3. ~~**IM-1.2** Worker preflight~~ ✅
+4. ~~**IM-2.2** Usage + cost visibility~~ ✅ (#8)
+5. **IM-2.1** Kill install friction (#7) — *the long pole; spike hosted vs one-command next*
