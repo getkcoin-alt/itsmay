@@ -18,14 +18,18 @@ warn() { printf '\033[33m⚠ %s\033[0m\n' "$1"; }
 die()  { printf '\033[31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
 
 # Read a value from the real terminal even when this script is piped from curl.
+# We must actually open /dev/tty (a stat-only `[ -r ]` test passes in CI sandboxes
+# where the device exists but can't be opened) — so probe it on fd 3 and stay
+# silent if there's no usable terminal.
 ask() {  # ask "Prompt" VARNAME [silent]
   local prompt="$1" __var="$2" silent="${3:-}" reply=""
-  if [ -r /dev/tty ]; then
+  if { exec 3</dev/tty; } 2>/dev/null; then
     if [ "$silent" = "silent" ]; then
-      read -r -s -p "$prompt" reply < /dev/tty || reply=""; echo
+      read -r -s -p "$prompt" reply <&3 || reply=""; echo
     else
-      read -r -p "$prompt" reply < /dev/tty || reply=""
+      read -r -p "$prompt" reply <&3 || reply=""
     fi
+    exec 3<&-
   fi
   printf -v "$__var" '%s' "$reply"
 }
