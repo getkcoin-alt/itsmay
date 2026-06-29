@@ -255,14 +255,22 @@ async def _status() -> None:
         except Exception:
             print(f"  {mark(None)} mac worker — unknown")
 
-        # Memory (RAG) size
+        # Memory (RAG) size + which backend is live (sqlite local / postgres)
+        mem = hd.get("memory") or {}
+        backend = mem.get("backend")
+        if backend == "sqlite":
+            backend_label = f" {_DIM}· sqlite (local){_RESET}"
+        elif backend == "postgres":
+            backend_label = f" {_DIM}· postgres{_RESET}"
+        else:
+            backend_label = ""
         try:
             m = (await client.get(f"{API_BASE}/v1/memory/stats", headers=headers)).json()
             count = int(m.get("count", 0) or 0)
             extra = "" if count else f" {_DIM}(run `scrappy seed`){_RESET}"
-            print(f"  {mark(count > 0)} memory — {count} facts stored{extra}")
+            print(f"  {mark(count > 0)} memory — {count} facts stored{backend_label}{extra}")
         except Exception:
-            print(f"  {mark(None)} memory — unknown")
+            print(f"  {mark(None)} memory — unknown{backend_label}")
 
         # LLM key pool — each key: active / cooling-down / token budget left.
         pool = (hd.get("llm") or {}).get("key_pool") or {}

@@ -13,7 +13,6 @@ from core.brain.llm import LLMClient
 from core.config import get_settings
 from core.logging import get_logger
 from core.memory.consolidator import consolidate_today
-from core.memory.db import get_pool
 from core.memory.embedder import Embedder
 from core.memory.episodic import EpisodicStore
 from core.memory.semantic import SemanticStore
@@ -29,15 +28,12 @@ SEED_SOURCE = "seed:knowledge.yaml"
 @router.get("/stats")
 async def memory_stats(
     episodic: EpisodicStore = Depends(get_episodic),
+    semantic: SemanticStore = Depends(get_semantic),
 ) -> dict:
     """Count of long-term memories stored for the configured user (RAG size)."""
     settings = get_settings()
     user_id = await episodic.get_or_create_user(settings.user_handle)
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        count = await conn.fetchval(
-            "SELECT count(*) FROM memories WHERE user_id = $1", user_id
-        )
+    count = await semantic.count(user_id)
     return {"count": int(count or 0)}
 
 
@@ -89,7 +85,6 @@ async def seed_memory(
             "inserted": 0,
         }
 
-    pool = await get_pool()
     inserted = 0
     skipped = 0
     for entry in entries:
@@ -98,13 +93,7 @@ async def seed_memory(
             continue
         importance = float(entry.get("importance", 0.6))
         kind = entry.get("kind", "factual")
-        async with pool.acquire() as conn:
-            exists = await conn.fetchval(
-                "SELECT 1 FROM memories WHERE user_id = $1 AND content = $2 LIMIT 1",
-                user_id,
-                content,
-            )
-        if exists:
+        if await semantic.content_exists(user_id, content):
             skipped += 1
             continue
         embedding = await embedder.embed(content)

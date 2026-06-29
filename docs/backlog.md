@@ -56,11 +56,26 @@ Scrappy delegates to experts / spawns agents for casual turns, burning tokens an
 ## Epic 2 — Economics + distribution (the scaling spine)
 *Goal: unlock scale (#3). Sane unit economics and zero-friction onboarding.*
 
-### IM-2.1 · Kill install friction (one-command or hosted) · **P0 · L**
+### IM-2.1 · Kill install friction (one-command, local) · **P0 · L** ⏳ IN PROGRESS
 Today onboarding needs a venv, API keys, and Railway knowledge — a developer's setup.
-- Decide: hosted backend (multi-tenant) vs a one-command installer (`curl | bash` /
-  packaged app). Spike both, pick one.
-- **Done when:** a non-developer can go from zero to talking to Scrappy in < 5 minutes.
+**Decision:** one-command **local** installer — the whole stack runs on the user's
+Mac (sovereign, zero infra cost, fastest to outside users; defers multi-tenancy).
+The blocker was Postgres/pgvector; so the first brick removes the server entirely.
+
+- ✅ **Milestone 1 — local SQLite memory backend.** `core/memory/sqlite_store.py`
+  (drop-in `SqliteEpisodicStore`/`SqliteSemanticStore`, brute-force numpy cosine,
+  one local file, no server/Docker). `core/memory/backend.py` auto-selects it when
+  there's no `DATABASE_URL` (Railway keeps Postgres, untouched). Surfaced in
+  `/v1/health` + `scrappy status` ("memory · sqlite (local)"). 14 tests — the first
+  memory path that runs in CI.
+- ☐ **Milestone 2 — local backend launch.** `scrappy serve` (uvicorn on
+  127.0.0.1:8000) + default `VAULT_API_BASE` to localhost, so there's no Railway.
+- ☐ **Milestone 3 — config from a file.** Read keys from `~/.itsmay/config.env`
+  (Groq + ElevenLabs) instead of manual `export`s.
+- ☐ **Milestone 4 — the installer.** `install.sh` (`curl | bash`): check Python,
+  make venv, `pip install .[mac]`, prompt for keys, write config, seed memory, print
+  how to start.
+- **Done when:** a non-developer goes from zero to talking to Scrappy in < 5 minutes.
 
 ### IM-2.2 · Usage + cost visibility · **P0 · M** ✅ DONE (#8)
 - `scrappy status` now shows, per key, `remaining / limit tokens left (X%)` read from

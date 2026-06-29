@@ -20,11 +20,13 @@ from apps.api.routers import worker as worker_router
 from core.brain.llm import LLMClient
 from core.config import get_settings
 from core.logging import configure_logging, get_logger
+from core.memory.backend import resolve_backend
 from core.memory.db import close_pool, get_pool
 from core.memory.embedder import Embedder
 from core.memory.episodic import EpisodicStore
 from core.memory.migrate import run_migrations
 from core.memory.semantic import SemanticStore
+from core.memory.sqlite_store import SqliteEpisodicStore, SqliteSemanticStore, ensure_schema
 from core.voice.stt_whisper import WhisperSTT
 from core.voice.tts_elevenlabs import ElevenLabsTTS
 
@@ -33,15 +35,24 @@ from core.voice.tts_elevenlabs import ElevenLabsTTS
 async def lifespan(app: FastAPI):
     configure_logging()
     log = get_logger("api")
-    log.info("api.startup")
 
-    pool = await get_pool()
-    await run_migrations(pool)
+    backend = resolve_backend()
+    app.state.memory_backend = backend
+    log.info("api.startup", memory_backend=backend)
+
+    if backend == "sqlite":
+        # Sovereign local path: a single file, no server, no migrations.
+        path = ensure_schema(get_settings().sqlite_path)
+        app.state.episodic = SqliteEpisodicStore(path)
+        app.state.semantic = SqliteSemanticStore(path)
+    else:
+        pool = await get_pool()
+        await run_migrations(pool)
+        app.state.episodic = EpisodicStore()
+        app.state.semantic = SemanticStore()
 
     app.state.llm = LLMClient()
     app.state.embedder = Embedder()
-    app.state.episodic = EpisodicStore()
-    app.state.semantic = SemanticStore()
     app.state.tts = ElevenLabsTTS()
     app.state.stt = WhisperSTT()
 
@@ -52,7 +63,8 @@ async def lifespan(app: FastAPI):
     await app.state.embedder.aclose()
     await app.state.tts.aclose()
     await app.state.stt.aclose()
-    await close_pool()
+    if backend == "postgres":
+        await close_pool()
 
 
 def create_app() -> FastAPI:
