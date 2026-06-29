@@ -15,11 +15,43 @@ from __future__ import annotations
 from core.agents.base import SubAgentResult, SubAgentSpec
 from core.brain.agent_loop import ClientToolCall, Done, Token, ToolResult, run_tool_loop
 from core.brain.llm import LLMClient, Message
+from core.config import get_settings
 from core.connectors.base import InvocationContext
 from core.connectors.registry import Registry, flatten_result
 from core.logging import get_logger
 
 log = get_logger(__name__)
+
+# Process-wide cache: one client per model. Routing an expert to the cheap model
+# must not open (and leak) a fresh httpx client on every delegation; these share
+# the process key pool, exactly like the default app client.
+_model_clients: dict[str, LLMClient] = {}
+
+
+def _client_for_model(model: str) -> LLMClient:
+    client = _model_clients.get(model)
+    if client is None:
+        client = LLMClient(model=model)
+        _model_clients[model] = client
+    return client
+
+
+def _expert_llm(spec: SubAgentSpec, default: LLMClient) -> LLMClient:
+    """Pick the model an expert runs on.
+
+    An explicit `spec.model` always wins. Otherwise a non-`heavy` expert is
+    auto-routed to the cheap agent model when `experts_use_agent_model` is on —
+    its work is mechanical tool-calling the 8b handles fine. Reasoning-critical
+    (`heavy`) experts, and the case where routing is disabled, stay on the
+    orchestrator's own client.
+    """
+    s = get_settings()
+    target = spec.model
+    if target is None and not spec.heavy and s.experts_use_agent_model:
+        target = s.llm_agent_model
+    if target and target != default.model:
+        return _client_for_model(target)
+    return default
 
 
 class _SubAgentToolRouter:
@@ -58,6 +90,7 @@ async def run_subagent(
     ctx: InvocationContext,
 ) -> SubAgentResult:
     """Execute one expert against a task and return its synthesized answer."""
+    llm = _expert_llm(spec, llm)
     router = _SubAgentToolRouter(registry, spec.tool_namespaces)
     messages = [
         Message(role="system", content=spec.system_prompt),
@@ -94,6 +127,7 @@ async def run_subagent(
     log.info(
         "subagent.done",
         agent=spec.name,
+        model=llm.model,
         iterations=iterations,
         tools_used=tools_used,
         stop_reason=stop_reason,

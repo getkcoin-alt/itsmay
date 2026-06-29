@@ -5,6 +5,7 @@ from __future__ import annotations
 from core.agents.registry import AgentRegistry
 from core.agents.runner import run_subagent
 from core.brain.orchestrator import Orchestrator
+from core.config import get_settings
 from core.connectors.base import Connector, ConnectorManifest, InvocationContext, ToolSpec
 from core.connectors.registry import Registry
 from tests.fakes import FakeLLM
@@ -87,6 +88,9 @@ async def test_memory_keeper_uses_only_its_namespace_and_saves():
         _make_connector("memory", [("save", "server", "saved!")]),
         _make_connector("other", [("thing", "server", "nope")]),
     )
+    # Memory Keeper is a tool-using expert → it now runs on the cheap agent model
+    # (IM-2.3). Give the fake that model so the auto-routing is a no-op and this
+    # scripted client is the one actually used.
     llm = FakeLLM(
         [
             {
@@ -99,7 +103,8 @@ async def test_memory_keeper_uses_only_its_namespace_and_saves():
                 ]
             },
             {"text": "Saved that."},
-        ]
+        ],
+        model=get_settings().llm_agent_model,
     )
     from core.agents.experts import MEMORY_KEEPER
 

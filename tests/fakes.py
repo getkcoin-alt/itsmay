@@ -17,9 +17,10 @@ class FakeLLM:
     (as dicts) and the tools payload for assertions.
     """
 
-    def __init__(self, script: list[dict] | None = None) -> None:
+    def __init__(self, script: list[dict] | None = None, model: str = "fake-model") -> None:
         self.script = list(script or [])
         self.calls: list[dict] = []
+        self.model = model  # real clients always carry one (used for routing/logs)
 
     async def chat_stream(
         self,

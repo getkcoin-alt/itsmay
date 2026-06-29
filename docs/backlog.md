@@ -70,11 +70,14 @@ Today onboarding needs a venv, API keys, and Railway knowledge — a developer's
 - *Note:* the meaningful budget on Groq's free tier is the tokens-per-day cap (shown),
   not a dollar figure ($0 on free tier); a real cost estimate lands with paid tiers.
 
-### IM-2.3 · Route experts to the cheap model too · **P1 · S**
-Finish the fan-out cost cut started by routing terminal agents to 8b.
-- Config flag to run experts (researcher/email/memory) on `llm_agent_model`; keep the
-  strategist on 70b for reasoning quality.
-- **Done when:** an expert-heavy turn no longer spends 70b tokens for routine sub-tasks.
+### IM-2.3 · Route experts to the cheap model too · **P1 · S** ✅ DONE
+Finished the fan-out cost cut started by routing terminal agents to 8b.
+- `experts_use_agent_model` (default on) auto-routes tool-using experts
+  (memory/email/researcher) to `llm_agent_model`; the Strategist is marked
+  `heavy=True` and stays on 70b for reasoning quality. An explicit `spec.model`
+  always wins. Cheap clients are cached per model (no httpx leak per delegation).
+- **Done when:** an expert-heavy turn no longer spends 70b tokens for routine
+  sub-tasks. ✓ — only pure-reasoning delegation now touches the big model.
 
 ### IM-2.4 · Multi-tenancy foundation · **P1 · L**
 Current design is single-tenant: hardcoded `user_handle`, in-memory agent store and

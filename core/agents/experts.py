@@ -71,6 +71,7 @@ STRATEGIST = SubAgentSpec(
         "- Keep it tight. A sharp half-page beats a vague essay."
     ),
     tool_namespaces=(),  # pure reasoning, no tools
+    heavy=True,  # reasoning quality matters here — keep on the big model
     temperature=0.4,
     max_iters=1,
 )
