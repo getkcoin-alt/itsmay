@@ -29,7 +29,10 @@ class SubAgentSpec:
     # means a pure-reasoning expert with no tools. The expert is only available
     # when *all* of these namespaces are registered.
     tool_namespaces: tuple[str, ...] = field(default_factory=tuple)
-    model: str | None = None  # optional model override (else the default LLM)
+    model: str | None = None  # explicit model override; wins over auto-routing
+    # Reasoning-critical expert that must stay on the big model — never auto-route
+    # it down to the cheap agent model (see `experts_use_agent_model`).
+    heavy: bool = False
     temperature: float = 0.3  # experts run cooler than conversational Scrappy
     max_iters: int = 6  # tool-loop cap inside the expert
 

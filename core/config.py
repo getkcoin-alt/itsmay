@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # quota. Groq's 8b-instant is plenty for running bash and reading output;
     # heavy coding is delegated to Claude Code, not this model.
     llm_agent_model: str = "llama-3.1-8b-instant"
+    # Route tool-using experts (memory/email/researcher) to `llm_agent_model` too:
+    # their work is mechanical tool-calling that the cheap 8b handles fine, so we
+    # don't spend 70b tokens on it. Reasoning-critical experts opt out via
+    # `SubAgentSpec.heavy=True` (the Strategist) and stay on the big model. Flip
+    # off to force every expert back onto `llm_model`.
+    experts_use_agent_model: bool = True
     # Max passes through the agentic tool loop per turn (tool call → result →
     # re-ask). Caps how many times Scrappy can chain tools/experts in one reply.
     tool_loop_max_iters: int = 4
