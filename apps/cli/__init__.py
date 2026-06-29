@@ -167,6 +167,50 @@ async def _stream_turn(message: str, session_id: str | None) -> str | None:
     return new_session_id
 
 
+def _budget_pct(k: dict) -> float | None:
+    """Percent of today's token budget left for one key (0–100), or None if the
+    limit isn't known yet (no call has populated the rate-limit headers)."""
+    rem = k.get("remaining_tokens")
+    lim = k.get("limit_tokens")
+    if isinstance(rem, int) and isinstance(lim, int) and lim > 0:
+        return max(0.0, min(100.0, rem / lim * 100.0))
+    return None
+
+
+def _format_key_line(k: dict) -> str:
+    """One status line for a single pooled key. Pure (no I/O) so it's unit-testable.
+
+    Shows active/cooling state, the remaining token budget as 'X / Y left (Z%)'
+    when the daily limit is known (else 'X tokens left'), the refill window, and a
+    ⚠️ low flag under ~15% of budget — so you see the wall coming before you hit it.
+    """
+    idx = k.get("idx", "?")
+    rem = k.get("remaining_tokens")
+    lim = k.get("limit_tokens")
+    reset = k.get("reset_tokens")
+    pct = _budget_pct(k)
+
+    if isinstance(rem, int) and isinstance(lim, int) and lim > 0:
+        budget = f"{rem:,} / {lim:,} tokens left ({pct:.0f}%)"
+    elif isinstance(rem, int):
+        budget = f"{rem:,} tokens left"
+    else:
+        budget = "tokens unknown"
+
+    low = pct is not None and pct < 15.0
+    low_flag = f" {_YELLOW}⚠️ low{_RESET}" if low else ""
+
+    if k.get("active"):
+        refill = f" · resets in {reset}" if (reset and low) else ""
+        return f"      #{idx} {_GREEN}● active{_RESET}    {_DIM}{budget}{refill}{_RESET}{low_flag}"
+    cd = k.get("cooldown_sec_remaining", 0) or 0
+    refill = f" · resets in {reset}" if reset else ""
+    return (
+        f"      #{idx} {_YELLOW}◐ cooling{_RESET}  "
+        f"{_DIM}{cd:.0f}s left · {budget}{refill}{_RESET}{low_flag}"
+    )
+
+
 async def _status() -> None:
     """Print server health + Mac-worker presence + memory count in one shot."""
     headers: dict[str, str] = {}
@@ -220,22 +264,21 @@ async def _status() -> None:
         except Exception:
             print(f"  {mark(None)} memory — unknown")
 
-        # LLM key pool — each key: active / cooling-down / remaining tokens.
+        # LLM key pool — each key: active / cooling-down / token budget left.
         pool = (hd.get("llm") or {}).get("key_pool") or {}
         keys = pool.get("keys") or []
         if keys:
             active = sum(1 for k in keys if k.get("active"))
+            low = [k for k in keys if (_budget_pct(k) or 100.0) < 15.0]
             print(f"  {mark(active > 0)} keys — {active}/{len(keys)} active")
+            if low:
+                print(
+                    f"      {_YELLOW}⚠️  {len(low)}/{len(keys)} key(s) under 15% of "
+                    f"today's token budget — stack more in LLM_API_KEY for headroom"
+                    f"{_RESET}"
+                )
             for k in keys:
-                idx = k.get("idx", "?")
-                tok = k.get("remaining_tokens")
-                tok_s = f"{tok:,} tokens left" if isinstance(tok, int) else "tokens unknown"
-                if k.get("active"):
-                    print(f"      #{idx} {_GREEN}● active{_RESET}      {_DIM}{tok_s}{_RESET}")
-                else:
-                    cd = k.get("cooldown_sec_remaining", 0) or 0
-                    print(f"      #{idx} {_YELLOW}◐ cooling{_RESET}    "
-                          f"{_DIM}{cd:.0f}s left · {tok_s}{_RESET}")
+                print(_format_key_line(k))
         elif (hd.get("llm") or {}).get("ok"):
             print(f"  {mark(None)} keys — no pool reported (single key or none)")
     print()
