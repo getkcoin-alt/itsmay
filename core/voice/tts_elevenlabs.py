@@ -17,6 +17,14 @@ from core.logging import get_logger
 log = get_logger(__name__)
 
 
+def _sample_rate_from_format(fmt: str) -> int:
+    """'pcm_24000' → 24000, 'mp3_44100_128' → 44100. Default 44100."""
+    for part in fmt.split("_")[1:]:
+        if part.isdigit() and len(part) >= 4:
+            return int(part)
+    return 44100
+
+
 class ElevenLabsTTS:
     BASE = "https://api.elevenlabs.io/v1"
 
@@ -32,6 +40,9 @@ class ElevenLabsTTS:
         self.voice_id = voice_id or s.elevenlabs_voice_id
         self.model_id = model_id or s.elevenlabs_model_id
         self.output_format = output_format or s.elevenlabs_output_format
+        # Raw PCM (pcm_*) can pipe straight to the audio device; mp3_* is for the
+        # web/API path. sample_rate lets a local player know the rate.
+        self.sample_rate = _sample_rate_from_format(self.output_format)
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
 
     async def aclose(self) -> None:
@@ -61,7 +72,7 @@ class ElevenLabsTTS:
         }
         headers = {
             "xi-api-key": self.api_key,
-            "accept": "audio/mpeg",
+            "accept": "audio/pcm" if self.output_format.startswith("pcm") else "audio/mpeg",
             "content-type": "application/json",
         }
         payload = {

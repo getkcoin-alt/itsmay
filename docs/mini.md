@@ -58,18 +58,39 @@ export PIPER_VOICE_PATH=~/piper/voice.onnx  # a youthful Piper voice
 export STT_PROVIDER=local
 
 mini enroll        # capture a voice, give the bot a nickname + pick a personality
-mini run           # listen · remember · speak when addressed
+mini run           # live chat — replies as you talk
 mini personas      # the personalities you can pick
 mini profiles      # who's enrolled (+ nickname + personality each chose)
 mini memories <id> # what it remembers about someone
 mini forget <id>   # erase a person entirely
+mini reset         # wipe everyone and start fresh
 ```
+
+## Live controls during `mini run`
+
+| Key | Does |
+|---|---|
+| **O** | Toggle **observe** mode — it just listens + remembers, says nothing. Press again to talk. |
+| **V** | Cycle the **voice** (Piper / ElevenLabs / macOS say) without restarting. |
+| **Ctrl-C** | Quit. |
+
+By default it **replies to everything you say** (a live conversation); press **O**
+when you want it to fall silent and just remember.
+
+## Voice options (`COMPANION_VOICE`, or press V)
+
+- **`auto`** (default) — Piper if `PIPER_VOICE_PATH` is set, else macOS `say`. Fully local.
+- **`elevenlabs`** — expressive, emotional cloud voice (needs `ELEVENLABS_API_KEY`);
+  pick an expressive `ELEVENLABS_VOICE_ID`. The brain + memory stay **local** — only
+  the voice is cloud. You can **interrupt it** mid-sentence (barge-in).
+- **`say`** / **`piper`** — force one explicitly.
 
 ## Status
 
-- ✅ **CI-tested (26 tests):** profile store, voiceprint matching, when-to-talk
-  gate, persona assembly, local-TTS streaming, and the full engine
-  (talk/observe/follow-up + memory) over real SQLite with fakes.
+- ✅ **CI-tested:** profile store, voiceprint matching, when-to-talk gate +
+  observe/talk mode override, persona registry, voice selection, ElevenLabs PCM,
+  local-TTS streaming, and the full engine (talk/observe/follow-up + memory) over
+  real SQLite with fakes.
 - ⏳ **Mac-validate next (needs a mic + the models):** the live `mini run`/`enroll`
   loop — real Ollama reply, faster-whisper STT, Piper voice, Resemblyzer voiceprint
   recognition across two real speakers. Pull the network to prove it's offline.

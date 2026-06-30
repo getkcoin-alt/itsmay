@@ -1,7 +1,8 @@
 """Mini AI device app — the local companion you run on your Mac (later: an appliance).
 
 Commands:
-  mini run                 the companion: listen, remember, speak when addressed
+  mini run                 the companion: replies as you talk · press O to observe
+                           (listen+remember silently) · press V to cycle the voice
   mini enroll              add a person: capture their voice + give the bot a nickname
   mini profiles            list enrolled people (nickname + personality each chose)
   mini personas            list the personalities you can pick at enrollment
