@@ -113,7 +113,11 @@ async def run_loop() -> None:
             print(f"  · (unrecognized voice) {text}")
             continue
 
-        turn = await eng.handle_text(profile, text)
+        try:
+            turn = await eng.handle_text(profile, text)
+        except Exception as e:  # most likely Ollama not running / model not pulled
+            print(f"  (brain error — is Ollama up with '{get_settings().companion_model}'? {e})")
+            continue
         await eng.profiles.blend_voiceprint(profile.id, voiceprint)  # sharpen over time
 
         tag = profile.person_name or profile.bot_nickname or profile.id[:8]

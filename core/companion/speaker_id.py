@@ -26,10 +26,10 @@ from core.logging import get_logger
 
 log = get_logger(__name__)
 
-# Default cosine threshold for "same speaker". Resemblyzer d-vectors put
-# same-speaker pairs well above this and different-speaker pairs below; tunable
-# via SPEAKER_MATCH_THRESHOLD.
-DEFAULT_THRESHOLD = 0.75
+# Default cosine threshold for "same speaker". Resemblyzer d-vectors on short,
+# casual utterances sit lower than on clean long ones, so 0.65 is a more forgiving
+# same-speaker line than the textbook ~0.75; tunable via SPEAKER_MATCH_THRESHOLD.
+DEFAULT_THRESHOLD = 0.65
 
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:

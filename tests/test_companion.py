@@ -124,6 +124,17 @@ def test_gate_nickname_midsentence_is_not_an_address():
     assert not d.speak and d.reason == "observing"
 
 
+def test_gate_fuzzy_nickname_tolerates_stt_mishearing():
+    # Enrolled "Pexel" but STT heard "Pixel" — still counts as being addressed.
+    d = should_respond("hello Pixel how's it going", nickname="Pexel", in_active_chat=False)
+    assert d.speak and d.reason == "addressed"
+
+
+def test_gate_short_nickname_requires_exact_match():
+    assert detect_address("hi al how are you", "Al")[0] is True  # exact
+    assert detect_address("hi ed how are you", "Al")[0] is False  # too short to fuzz
+
+
 def test_gate_follow_up_in_active_chat_speaks():
     d = should_respond("and what about tomorrow", nickname="Pixel", in_active_chat=True)
     assert d.speak and d.reason == "follow_up"

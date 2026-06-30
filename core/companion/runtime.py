@@ -64,6 +64,14 @@ class CompanionEngine:
         self, voiceprint: np.ndarray | None
     ) -> tuple[Match, Profile | None]:
         profs = await self.profiles.all()
+        if not profs:
+            return Match(None, 0.0), None
+        if len(profs) == 1:
+            # Single-person device: route everything to them. Voiceprint gating
+            # only earns its keep once two+ people share a device, and short
+            # clips make it unreliable — so don't let it block a solo user.
+            only = profs[0]
+            return Match(only.id, 1.0), only
         if voiceprint is None:
             return Match(None, 0.0), None
         match = self.identifier.identify(

@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     companion_model: str = "llama3.2:3b"          # Ollama instruct model for the friend
     companion_persona: str = "friend"             # default personality: "friend" | "mentor"
     companion_sqlite_path: str = "~/.itsmay/mini.db"  # one file per device (profiles + memory)
-    speaker_match_threshold: float = 0.75         # cosine ≥ this → same speaker (voiceprint)
+    speaker_match_threshold: float = 0.65         # cosine ≥ this → same speaker (voiceprint)
     companion_active_window_s: float = 30.0       # how long a chat stays "live" for follow-ups
     companion_observe: bool = True                # listen + remember silently when not addressed
 

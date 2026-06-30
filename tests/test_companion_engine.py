@@ -88,12 +88,23 @@ def test_local_tts_unconfigured_without_voice_or_synth():
 # ── engine: identify / enroll ─────────────────────────────────────
 
 
-async def test_enroll_then_identify(tmp_path):
+async def test_single_profile_device_routes_any_voice(tmp_path):
+    # One enrolled person → solo device → route everything to them, even a voice
+    # far from their print (short clips make voiceprints unreliable).
     eng = _engine(tmp_path)
     p = await eng.enroll(person_name="Aman", bot_nickname="Pixel", voiceprint=_vec(1, 0, 0, 0))
-    _, prof = await eng.identify_speaker(_vec(0.95, 0.05, 0, 0))
+    _, prof = await eng.identify_speaker(_vec(0, 0, 1, 0))
     assert prof is not None and prof.id == p.id
-    _, none = await eng.identify_speaker(_vec(0, 0, 1, 0))  # far → unknown
+
+
+async def test_multi_profile_uses_voiceprint(tmp_path):
+    # Two+ people → voiceprint gating kicks in.
+    eng = _engine(tmp_path)
+    a = await eng.enroll(person_name="A", bot_nickname="Pixel", voiceprint=_vec(1, 0, 0, 0))
+    await eng.enroll(person_name="B", bot_nickname="Buddy", voiceprint=_vec(0, 1, 0, 0))
+    _, prof = await eng.identify_speaker(_vec(0.95, 0.05, 0, 0))
+    assert prof is not None and prof.id == a.id
+    _, none = await eng.identify_speaker(_vec(0, 0, 1, 0))  # far from both → unknown
     assert none is None
 
 
