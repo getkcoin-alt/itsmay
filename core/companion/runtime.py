@@ -18,7 +18,7 @@ from uuid import UUID
 
 import numpy as np
 
-from core.companion.gate import is_active_window, should_respond
+from core.companion.gate import GateDecision, is_active_window, should_respond
 from core.companion.persona import build_companion_messages, load_persona
 from core.companion.profiles import Profile, ProfileStore, ensure_profile_schema
 from core.companion.speaker_id import Match, SpeakerIdentifier
@@ -97,19 +97,29 @@ class CompanionEngine:
 
     # ── one utterance ────────────────────────────────────────────
     async def handle_text(
-        self, profile: Profile, text: str, *, now: float | None = None
+        self, profile: Profile, text: str, *, mode: str = "auto", now: float | None = None
     ) -> Turn:
+        """Process one utterance. `mode` overrides the speak/observe decision:
+        - "talk"    → always reply (live conversation, no nickname needed)
+        - "observe" → never reply, just listen + remember (the press-O mode)
+        - "auto"    → the nickname gate (`should_respond`) decides
+        """
         text = (text or "").strip()
         if not text:
             return Turn(False, "no_speech", "", profile.id)
         now = now if now is not None else time.monotonic()
 
-        in_active = is_active_window(
-            self._last_spoke.get(profile.id), now, self.active_window_s
-        )
-        decision = should_respond(
-            text, nickname=profile.bot_nickname, in_active_chat=in_active
-        )
+        if mode == "observe":
+            decision = GateDecision(False, "observe", text)
+        elif mode == "talk":
+            decision = GateDecision(True, "talk", text)
+        else:
+            in_active = is_active_window(
+                self._last_spoke.get(profile.id), now, self.active_window_s
+            )
+            decision = should_respond(
+                text, nickname=profile.bot_nickname, in_active_chat=in_active
+            )
 
         session_id = await self._session_for(profile)
         emb = await self.embedder.embed(text)

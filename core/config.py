@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     # ── Mini AI companion (fully local, per-device) ───────────────
     companion_model: str = "llama3.2:3b"          # Ollama instruct model for the friend
     companion_persona: str = "friend"             # default personality: "friend" | "mentor"
+    # Voice: "auto" (Piper→say), "say", "piper", or "elevenlabs" (cloud, expressive,
+    # needs ELEVENLABS_API_KEY). The local brain + memory stay regardless of voice.
+    companion_voice: str = "auto"
     companion_sqlite_path: str = "~/.itsmay/mini.db"  # one file per device (profiles + memory)
     speaker_match_threshold: float = 0.65         # cosine ≥ this → same speaker (voiceprint)
     companion_active_window_s: float = 30.0       # how long a chat stays "live" for follow-ups

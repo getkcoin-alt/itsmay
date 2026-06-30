@@ -143,3 +143,28 @@ async def test_window_expires_back_to_observing(tmp_path):
     await eng.handle_text(p, "Pixel, hi", now=100.0)
     turn = await eng.handle_text(p, "random thought", now=200.0)  # 100s later → idle again
     assert not turn.spoke and turn.reason == "observing"
+
+
+# ── mode override: press-O observe vs talk-to-everything ──────────
+
+
+async def test_mode_observe_never_speaks_but_remembers(tmp_path):
+    eng = _engine(tmp_path, llm=FakeLLM([{"text": "hi"}]))
+    p = await eng.enroll(person_name=None, bot_nickname="Pixel", voiceprint=_vec(1, 0, 0, 0))
+    turn = await eng.handle_text(p, "Pixel, hello there", mode="observe", now=100.0)
+    assert not turn.spoke and turn.reason == "observe" and turn.reply == ""
+    assert await eng.semantic.count(p.user_id) == 1  # still remembered while observing
+
+
+async def test_mode_talk_replies_without_a_nickname(tmp_path):
+    eng = _engine(tmp_path, llm=FakeLLM([{"text": "sure thing"}]))
+    p = await eng.enroll(person_name=None, bot_nickname="Pixel", voiceprint=_vec(1, 0, 0, 0))
+    turn = await eng.handle_text(p, "what's the weather", mode="talk", now=100.0)
+    assert turn.spoke and turn.reason == "talk" and turn.reply == "sure thing"
+
+
+async def test_mode_auto_still_uses_the_gate(tmp_path):
+    eng = _engine(tmp_path, llm=FakeLLM([{"text": "hi"}]))
+    p = await eng.enroll(person_name=None, bot_nickname="Pixel", voiceprint=_vec(1, 0, 0, 0))
+    turn = await eng.handle_text(p, "random thought", mode="auto", now=100.0)
+    assert not turn.spoke and turn.reason == "observing"  # unaddressed + idle
