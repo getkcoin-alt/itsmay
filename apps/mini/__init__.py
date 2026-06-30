@@ -7,6 +7,7 @@ Commands:
   mini personas            list the personalities you can pick at enrollment
   mini memories <id>       show what the bot remembers about a profile
   mini forget <id>         delete a person entirely (voice + memories)
+  mini reset               wipe ALL profiles + memories (start fresh)
 
 Fully local: Ollama LLM + faster-whisper STT + Piper TTS + fastembed memory, one
 SQLite file per device (COMPANION_SQLITE_PATH). Nothing leaves the machine.
@@ -108,6 +109,28 @@ async def _forget(profile_id: str) -> None:
           else f"{_YELLOW}Nothing to forget.{_RESET}")
 
 
+async def _reset() -> None:
+    from core.companion.profiles import ProfileStore, ensure_profile_schema
+    from core.config import get_settings
+
+    path = ensure_profile_schema(get_settings().companion_sqlite_path)
+    store = ProfileStore(path)
+    profiles = await store.all()
+    if not profiles:
+        print(f"{_DIM}Already empty — nothing to reset.{_RESET}")
+        return
+    ans = (
+        await asyncio.to_thread(
+            input, f"Erase ALL {len(profiles)} profile(s) + their memories? [y/N] "
+        )
+    ).strip().lower()
+    if ans != "y":
+        print("Cancelled.")
+        return
+    n = await store.wipe_all()
+    print(f"{_GREEN}Reset — erased {n} profile(s). Start fresh with `mini enroll`.{_RESET}")
+
+
 async def _resolve(store, profile_id: str):
     """Match a full id or a short id prefix to a profile."""
     for p in await store.all():
@@ -125,6 +148,9 @@ def main() -> None:
         return
     if cmd == "personas":
         asyncio.run(_list_personas())
+        return
+    if cmd == "reset":
+        asyncio.run(_reset())
         return
     if cmd == "memories":
         if len(args) < 2:

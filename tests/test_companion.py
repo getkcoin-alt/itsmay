@@ -83,6 +83,18 @@ async def test_forget_cascades_memories(store, tmp_path):
     assert await store.forget(p.id) is False  # already gone
 
 
+async def test_wipe_all_clears_every_profile(store):
+    a = await store.create_person(person_name="A", bot_nickname="Pixel", voiceprint=_vec(1, 0))
+    await store.create_person(person_name="B", bot_nickname="Coach", voiceprint=_vec(0, 1))
+    sem = SqliteSemanticStore(store.path)
+    await sem.write(a.user_id, "factual", "x", _vec(1, 0, 0, 0))
+
+    assert await store.wipe_all() == 2  # both removed
+    assert await store.all() == []
+    assert await sem.count(a.user_id) == 0  # memories cascaded too
+    assert await store.wipe_all() == 0  # idempotent
+
+
 # ── speaker-id matching (pure) ────────────────────────────────────
 
 
