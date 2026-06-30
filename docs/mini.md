@@ -9,6 +9,18 @@ device, one (or a few) people per device.
 Built as a new module inside itsmay, reusing the local stack (it does *not* touch
 Scrappy/the operator API).
 
+## Personalities (pick one per person)
+
+Each person chooses their companion's vibe at enrollment (stored on the profile,
+default `COMPANION_PERSONA`). Adding a third is just a prompt file + a registry
+entry in `core/companion/persona.py`.
+
+- **`friend`** — playful, childish, gentle roasting; a warm peer who's just glad
+  you showed up (`system_mini.md`).
+- **`mentor`** — an adaptive lifelong companion: exceptional memory, calm
+  confidence, honest feedback, dry humor, and a relentless focus on helping you
+  become who you're trying to be (`system_mini_mentor.md`).
+
 ## What runs where
 
 | Layer | Local engine |
@@ -45,9 +57,10 @@ export COMPANION_MODEL=llama3.2:3b          # ollama pull llama3.2:3b
 export PIPER_VOICE_PATH=~/piper/voice.onnx  # a youthful Piper voice
 export STT_PROVIDER=local
 
-mini enroll        # capture a voice, give the bot a nickname
+mini enroll        # capture a voice, give the bot a nickname + pick a personality
 mini run           # listen · remember · speak when addressed
-mini profiles      # who's enrolled (+ the nickname each gave the bot)
+mini personas      # the personalities you can pick
+mini profiles      # who's enrolled (+ nickname + personality each chose)
 mini memories <id> # what it remembers about someone
 mini forget <id>   # erase a person entirely
 ```
