@@ -60,24 +60,41 @@ async def _speak(tts: LocalTTS, text: str) -> None:
     _play_pcm(b"".join(chunks), tts.sample_rate)
 
 
+_ENROLL_LINES = [
+    "Hi, this is my voice, and I'm setting up my own AI companion.",
+    "I like clear mornings, good music, and getting real things done.",
+    "Learn how I sound — my rhythm, my pace, the way I pause.",
+    "From now on, when I call your name, you'll know it's me.",
+]
+_ENROLL_SECONDS = 16.0
+
+
 async def enroll_flow() -> None:
     from core.companion.persona import PERSONAS, persona_key, persona_title
 
     eng = build_engine()
-    print("Let's set up a new friend.")
-    wav, sr = _record_fixed(8.0)
+    print("\nLet's learn your voice so I can recognise you later.\n")
+    print(f"When you're ready, I'll listen for about {int(_ENROLL_SECONDS)} seconds.")
+    print("Read these lines out loud, naturally — no rush:\n")
+    for line in _ENROLL_LINES:
+        print(f"   “{line}”")
+    await asyncio.to_thread(input, "\n[ press Enter to start recording ] ")
+
+    wav, sr = _record_fixed(_ENROLL_SECONDS)
     voiceprint = await eng.identifier.embed(wav, sr)
-    name = (await asyncio.to_thread(input, "Their name (optional): ")).strip() or None
-    nick = (await asyncio.to_thread(input, "What should they call me? ")).strip() or None
+    print("Got it. ✓\n")
+
+    name = (await asyncio.to_thread(input, "Your name (optional): ")).strip() or None
+    nick = (await asyncio.to_thread(input, "What should you call me? ")).strip() or None
     choices = " / ".join(f"{k} ({t})" for k, (t, _f) in PERSONAS.items())
-    raw = (await asyncio.to_thread(input, f"Personality [{choices}]: ")).strip()
+    raw = (await asyncio.to_thread(input, f"My personality [{choices}]: ")).strip()
     persona = persona_key(raw or get_settings().companion_persona)
     p = await eng.enroll(
         person_name=name, bot_nickname=nick, voiceprint=voiceprint, persona=persona
     )
     print(
-        f"Done — {name or 'they'} can call me {nick or '(unnamed)'} "
-        f"as their {persona_title(persona)}.  (id={p.id[:8]})"
+        f"\nDone — you can call me {nick or '(unnamed)'} as your "
+        f"{persona_title(persona)}. Say my name and I'll answer.  (id={p.id[:8]})"
     )
 
 

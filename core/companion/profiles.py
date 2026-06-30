@@ -248,3 +248,14 @@ class ProfileStore:
                 return False
             conn.execute("DELETE FROM users WHERE id = ?", (r["user_id"],))
             return True
+
+    async def wipe_all(self) -> int:
+        """Erase every profile + all memories on this device. Returns how many
+        profiles were removed."""
+        return await asyncio.to_thread(self._wipe_all)
+
+    def _wipe_all(self) -> int:
+        with closing(_connect(self.path)) as conn, conn:
+            n = conn.execute("SELECT count(*) FROM voice_profiles").fetchone()[0]
+            conn.execute("DELETE FROM users")  # cascades sessions/messages/memories/profiles
+            return int(n)
