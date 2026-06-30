@@ -80,11 +80,25 @@ class Settings(BaseSettings):
     stt_api_key: str = ""
     stt_model: str = "whisper-large-v3-turbo"
 
-    # ── TTS (ElevenLabs) ──────────────────────────────────────────
+    # ── TTS ───────────────────────────────────────────────────────
+    # "elevenlabs" (cloud, natural) or "piper" (local/offline, sovereign — used by
+    # Mini AI). The two share the same streaming surface.
+    tts_provider: str = "elevenlabs"
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
     elevenlabs_model_id: str = "eleven_flash_v2_5"
     elevenlabs_output_format: str = "mp3_44100_128"
+    # Local Piper TTS (offline). PIPER_VOICE_PATH points at a downloaded .onnx
+    # voice; a youthful voice + length_scale gives Mini AI its childish tone.
+    piper_voice_path: str = ""
+    piper_length_scale: float = 1.0
+
+    # ── Mini AI companion (fully local, per-device) ───────────────
+    companion_model: str = "llama3.2:3b"          # Ollama instruct model for the friend
+    companion_sqlite_path: str = "~/.itsmay/mini.db"  # one file per device (profiles + memory)
+    speaker_match_threshold: float = 0.75         # cosine ≥ this → same speaker (voiceprint)
+    companion_active_window_s: float = 30.0       # how long a chat stays "live" for follow-ups
+    companion_observe: bool = True                # listen + remember silently when not addressed
 
     # ── Identity / mission ────────────────────────────────────────
     user_handle: str = "karnveer"

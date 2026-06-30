@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 scrappy = "apps.cli:main"
+mini = "apps.mini:main"
 
 [project.optional-dependencies]
 # Server doesn't need either of these in the default cloud-STT path.
@@ -30,6 +31,16 @@ whisper_local = ["faster-whisper>=1.0"]      # only if STT_PROVIDER=local
 # unlike plain `webrtcvad`); it's optional — the loop falls back to a pure-Python
 # energy VAD if it's absent, so voice stays hands-free either way.
 mac = ["sounddevice>=0.5", "webrtcvad-wheels>=2.0.14"]
+# Mini AI — the fully-local voice companion. Heavy: resemblyzer pulls in torch for
+# voiceprint speaker-ID; piper-tts is the offline voice. Only needed on a device
+# that runs `mini`, never on the server.
+mini = [
+    "sounddevice>=0.5",
+    "webrtcvad-wheels>=2.0.14",
+    "faster-whisper>=1.0",
+    "piper-tts>=1.2",
+    "resemblyzer>=0.1.4",
+]
 gmail = [                                    # Gmail connector (set GOOGLE_CREDENTIALS_JSON)
     "google-api-python-client>=2.140",
     "google-auth-httplib2>=0.2",
