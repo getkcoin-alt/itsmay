@@ -91,6 +91,9 @@ async def run_loop() -> None:
 
     stt = WhisperSTT(provider="local")
     tts = LocalTTS()
+    if not tts.configured:
+        print("(no Piper voice set — replies will be text-only. "
+              "Set PIPER_VOICE_PATH to a .onnx voice for speech.)")
     print("Mini AI is listening.  (say your nickname to get my attention · Ctrl+C to stop)\n")
 
     while True:
@@ -116,6 +119,10 @@ async def run_loop() -> None:
         tag = profile.person_name or profile.bot_nickname or profile.id[:8]
         if turn.spoke and turn.reply:
             print(f"  {tag}: {text}\n  {profile.bot_nickname or 'Mini'}: {turn.reply}")
-            await _speak(tts, turn.reply)
+            if tts.configured:
+                try:
+                    await _speak(tts, turn.reply)
+                except Exception as e:  # never let a TTS hiccup kill the conversation
+                    print(f"  (voice error, continuing text-only: {e})")
         else:
             print(f"  · ({turn.reason}) {tag}: {text}")

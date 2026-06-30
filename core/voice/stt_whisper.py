@@ -41,7 +41,11 @@ class WhisperSTT:
     ) -> None:
         s = get_settings()
         self.provider = (provider or s.stt_provider).lower()
-        self.model_size = model or s.stt_model
+        # Local faster-whisper expects size names (small.en, large-v3-turbo, …),
+        # which differ from the cloud provider's model id — so default to
+        # `whisper_model` for local and `stt_model` for groq.
+        default_model = s.whisper_model if self.provider == "local" else s.stt_model
+        self.model_size = model or default_model
         self.base_url = (base_url or s.stt_base_url).rstrip("/")
         self.keys = KeyPool.from_csv(
             api_key if api_key is not None else s.stt_api_key, label="stt"
