@@ -14,9 +14,30 @@ from core.brain.llm import Message
 
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "brain" / "prompts"
 
+# Selectable personalities. Each person can pick the vibe of their companion at
+# enrollment (stored on the profile); falls back to settings.companion_persona.
+# title → shown in `mini profiles`; file → the system prompt.
+PERSONAS: dict[str, tuple[str, str]] = {
+    "friend": ("Best Friend", "system_mini.md"),  # playful, childish, gentle roasting
+    "mentor": ("Mentor", "system_mini_mentor.md"),  # calm, honest, growth-focused
+}
+DEFAULT_PERSONA = "friend"
 
-def load_persona() -> str:
-    return (PROMPTS_DIR / "system_mini.md").read_text(encoding="utf-8").strip()
+
+def persona_key(name: str | None) -> str:
+    """Normalize a persona name to a known key (unknown/empty → default)."""
+    key = (name or "").strip().lower()
+    return key if key in PERSONAS else DEFAULT_PERSONA
+
+
+def persona_title(name: str | None) -> str:
+    return PERSONAS[persona_key(name)][0]
+
+
+def load_persona(name: str | None = None) -> str:
+    """Load a persona's system prompt by key. Unknown name → the default persona."""
+    _, fname = PERSONAS[persona_key(name)]
+    return (PROMPTS_DIR / fname).read_text(encoding="utf-8").strip()
 
 
 def build_companion_messages(

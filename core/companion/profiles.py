@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS voice_profiles (
     user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     person_name   TEXT,
     bot_nickname  TEXT,
+    persona       TEXT,
     voiceprint    BLOB,
     sample_count  INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT NOT NULL,
@@ -56,6 +57,10 @@ def ensure_profile_schema(path: str) -> str:
     resolved = ensure_memory_schema(path)  # users table must exist for the FK
     with closing(_connect(resolved)) as conn, conn:
         conn.executescript(_PROFILE_SCHEMA)
+        # Additive: bring older DBs (pre-persona) up to date without a migration.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(voice_profiles)")}
+        if "persona" not in cols:
+            conn.execute("ALTER TABLE voice_profiles ADD COLUMN persona TEXT")
     log.info("companion.profile_schema_ready", path=resolved)
     return resolved
 
@@ -66,6 +71,7 @@ class Profile:
     user_id: UUID  # the person's memory namespace (users.id)
     person_name: str | None
     bot_nickname: str | None
+    persona: str | None  # personality key (see core.companion.persona.PERSONAS)
     voiceprint: np.ndarray | None
     sample_count: int
     created_at: datetime
@@ -73,11 +79,13 @@ class Profile:
 
 
 def _row_to_profile(r) -> Profile:
+    keys = r.keys()
     return Profile(
         id=r["id"],
         user_id=UUID(r["user_id"]),
         person_name=r["person_name"],
         bot_nickname=r["bot_nickname"],
+        persona=r["persona"] if "persona" in keys else None,
         voiceprint=_from_blob(r["voiceprint"]),
         sample_count=int(r["sample_count"]),
         created_at=_parse_ts(r["created_at"]) or datetime.now().astimezone(),
@@ -103,13 +111,14 @@ class ProfileStore:
         person_name: str | None,
         bot_nickname: str | None,
         voiceprint: np.ndarray | None,
+        persona: str | None = None,
     ) -> Profile:
         """Create a brand-new person: a fresh memory namespace + a voice profile."""
         profile_id = uuid4().hex
         handle = f"mini-{profile_id[:12]}"
         user_id = await self._episodic.get_or_create_user(handle)
         return await asyncio.to_thread(
-            self._insert, profile_id, user_id, person_name, bot_nickname, voiceprint
+            self._insert, profile_id, user_id, person_name, bot_nickname, persona, voiceprint
         )
 
     def _insert(
@@ -118,6 +127,7 @@ class ProfileStore:
         user_id: UUID,
         person_name: str | None,
         bot_nickname: str | None,
+        persona: str | None,
         voiceprint: np.ndarray | None,
     ) -> Profile:
         now = _now()
@@ -125,15 +135,16 @@ class ProfileStore:
             conn.execute(
                 """
                 INSERT INTO voice_profiles
-                    (id, user_id, person_name, bot_nickname, voiceprint,
+                    (id, user_id, person_name, bot_nickname, persona, voiceprint,
                      sample_count, created_at, last_seen_at)
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     profile_id,
                     str(user_id),
                     person_name,
                     bot_nickname,
+                    persona,
                     _to_blob(voiceprint),
                     now,
                     now,
@@ -144,6 +155,7 @@ class ProfileStore:
             user_id=user_id,
             person_name=person_name,
             bot_nickname=bot_nickname,
+            persona=persona,
             voiceprint=None if voiceprint is None else np.asarray(voiceprint, dtype=np.float32),
             sample_count=1,
             created_at=_parse_ts(now) or datetime.now().astimezone(),
@@ -200,6 +212,9 @@ class ProfileStore:
 
     async def set_person_name(self, profile_id: str, name: str) -> None:
         await asyncio.to_thread(self._set_field, profile_id, "person_name", name)
+
+    async def set_persona(self, profile_id: str, persona: str) -> None:
+        await asyncio.to_thread(self._set_field, profile_id, "persona", persona)
 
     def _set_field(self, profile_id: str, field: str, value: str) -> None:
         # `field` is an internal literal ("bot_nickname"/"person_name"), never user input.

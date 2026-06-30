@@ -3,7 +3,8 @@
 Commands:
   mini run                 the companion: listen, remember, speak when addressed
   mini enroll              add a person: capture their voice + give the bot a nickname
-  mini profiles            list enrolled people (and the nickname each gave the bot)
+  mini profiles            list enrolled people (nickname + personality each chose)
+  mini personas            list the personalities you can pick at enrollment
   mini memories <id>       show what the bot remembers about a profile
   mini forget <id>         delete a person entirely (voice + memories)
 
@@ -48,13 +49,28 @@ async def _list_profiles() -> None:
     if not profiles:
         print(f"{_DIM}No profiles yet — run `mini enroll` to add someone.{_RESET}")
         return
+    from core.companion.persona import persona_title
+
     print(f"\n{_BOLD}Enrolled people{_RESET}  {_DIM}({path}){_RESET}")
     for p in profiles:
         name = p.person_name or "(unnamed)"
         nick = p.bot_nickname or "(no nickname)"
         seen = p.last_seen_at.strftime("%Y-%m-%d") if p.last_seen_at else "?"
-        print(f"  {_GREEN}{name}{_RESET} — calls me {_CYAN}{nick}{_RESET}  "
+        print(f"  {_GREEN}{name}{_RESET} — calls me {_CYAN}{nick}{_RESET} "
+              f"{_DIM}({persona_title(p.persona)}){_RESET}  "
               f"{_DIM}id={p.id[:8]} · {p.sample_count} samples · last {seen}{_RESET}")
+    print()
+
+
+async def _list_personas() -> None:
+    from core.companion.persona import PERSONAS
+    from core.config import get_settings
+
+    default = get_settings().companion_persona
+    print(f"\n{_BOLD}Personalities{_RESET}  {_DIM}(pick one per person at `mini enroll`){_RESET}")
+    for key, (title, _file) in PERSONAS.items():
+        star = f" {_GREEN}(default){_RESET}" if key == default else ""
+        print(f"  {_CYAN}{key}{_RESET} — {title}{star}")
     print()
 
 
@@ -106,6 +122,9 @@ def main() -> None:
 
     if cmd == "profiles":
         asyncio.run(_list_profiles())
+        return
+    if cmd == "personas":
+        asyncio.run(_list_personas())
         return
     if cmd == "memories":
         if len(args) < 2:

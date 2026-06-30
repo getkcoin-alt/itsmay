@@ -61,14 +61,24 @@ async def _speak(tts: LocalTTS, text: str) -> None:
 
 
 async def enroll_flow() -> None:
+    from core.companion.persona import PERSONAS, persona_key, persona_title
+
     eng = build_engine()
     print("Let's set up a new friend.")
     wav, sr = _record_fixed(8.0)
     voiceprint = await eng.identifier.embed(wav, sr)
     name = (await asyncio.to_thread(input, "Their name (optional): ")).strip() or None
     nick = (await asyncio.to_thread(input, "What should they call me? ")).strip() or None
-    p = await eng.enroll(person_name=name, bot_nickname=nick, voiceprint=voiceprint)
-    print(f"Done — {name or 'they'} can call me {nick or '(unnamed)'} now.  (id={p.id[:8]})")
+    choices = " / ".join(f"{k} ({t})" for k, (t, _f) in PERSONAS.items())
+    raw = (await asyncio.to_thread(input, f"Personality [{choices}]: ")).strip()
+    persona = persona_key(raw or get_settings().companion_persona)
+    p = await eng.enroll(
+        person_name=name, bot_nickname=nick, voiceprint=voiceprint, persona=persona
+    )
+    print(
+        f"Done — {name or 'they'} can call me {nick or '(unnamed)'} "
+        f"as their {persona_title(persona)}.  (id={p.id[:8]})"
+    )
 
 
 async def run_loop() -> None:

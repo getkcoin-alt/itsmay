@@ -19,7 +19,7 @@ from uuid import UUID
 import numpy as np
 
 from core.companion.gate import is_active_window, should_respond
-from core.companion.persona import build_companion_messages
+from core.companion.persona import build_companion_messages, load_persona
 from core.companion.profiles import Profile, ProfileStore, ensure_profile_schema
 from core.companion.speaker_id import Match, SpeakerIdentifier
 from core.logging import get_logger
@@ -78,9 +78,13 @@ class CompanionEngine:
         person_name: str | None,
         bot_nickname: str | None,
         voiceprint: np.ndarray | None,
+        persona: str | None = None,
     ) -> Profile:
         return await self.profiles.create_person(
-            person_name=person_name, bot_nickname=bot_nickname, voiceprint=voiceprint
+            person_name=person_name,
+            bot_nickname=bot_nickname,
+            voiceprint=voiceprint,
+            persona=persona,
         )
 
     # ── one utterance ────────────────────────────────────────────
@@ -107,13 +111,15 @@ class CompanionEngine:
         reply = ""
         if decision.speak:
             recalled = await self.semantic.search(profile.user_id, emb, k=6)
+            # Each person's chosen personality (engine-level persona overrides, if set).
+            persona_text = self.persona or load_persona(profile.persona)
             messages = build_companion_messages(
                 nickname=profile.bot_nickname,
                 person_name=profile.person_name,
                 retrieved_memories=[r.content for r in recalled],
                 recent_messages=recent,
                 user_input=decision.cleaned_text,
-                persona=self.persona,
+                persona=persona_text,
             )
             reply = await self._generate(messages)
 
