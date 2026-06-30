@@ -18,6 +18,7 @@ from apps.mac_agent.vad import SAMPLE_RATE, EnergyVADRecorder, VADRecorder
 from core.companion.runtime import build_engine
 from core.config import get_settings
 from core.voice.tts_local import LocalTTS
+from core.voice.tts_say import MacSayTTS
 
 
 def _record_utterance() -> np.ndarray | None:
@@ -55,9 +56,24 @@ def _play_pcm(pcm: bytes, sr: int) -> None:
     sd.wait()
 
 
-async def _speak(tts: LocalTTS, text: str) -> None:
-    chunks = [c async for c in tts.stream(text)]
-    _play_pcm(b"".join(chunks), tts.sample_rate)
+def _pick_tts():
+    """Mini AI's voice: Piper if a voice file is configured, else macOS `say`
+    (zero setup), else None → text-only."""
+    piper = LocalTTS()
+    if piper.configured:
+        return piper, "Piper"
+    say = MacSayTTS()
+    if say.configured:
+        return say, "macOS say"
+    return None, "text-only"
+
+
+async def _speak(tts, text: str) -> None:
+    if hasattr(tts, "speak"):  # macOS say — plays the audio itself
+        await tts.speak(text)
+    else:  # Piper — stream PCM to the device
+        chunks = [c async for c in tts.stream(text)]
+        _play_pcm(b"".join(chunks), tts.sample_rate)
 
 
 _ENROLL_LINES = [
@@ -107,10 +123,8 @@ async def run_loop() -> None:
         return
 
     stt = WhisperSTT(provider="local")
-    tts = LocalTTS()
-    if not tts.configured:
-        print("(no Piper voice set — replies will be text-only. "
-              "Set PIPER_VOICE_PATH to a .onnx voice for speech.)")
+    tts, voice_label = _pick_tts()
+    print(f"(voice: {voice_label})")
     print("Mini AI is listening.  (say your nickname to get my attention · Ctrl+C to stop)\n")
 
     while True:
@@ -140,7 +154,7 @@ async def run_loop() -> None:
         tag = profile.person_name or profile.bot_nickname or profile.id[:8]
         if turn.spoke and turn.reply:
             print(f"  {tag}: {text}\n  {profile.bot_nickname or 'Mini'}: {turn.reply}")
-            if tts.configured:
+            if tts is not None:
                 try:
                     await _speak(tts, turn.reply)
                 except Exception as e:  # never let a TTS hiccup kill the conversation

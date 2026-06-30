@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     # voice; a youthful voice + length_scale gives Mini AI its childish tone.
     piper_voice_path: str = ""
     piper_length_scale: float = 1.0
+    # macOS `say` voice — Mini AI's zero-setup fallback when Piper isn't configured.
+    # Empty = system default. List options with `say -v '?'`; rate 0 = default.
+    say_voice: str = ""
+    say_rate: int = 0
 
     # ── Mini AI companion (fully local, per-device) ───────────────
     companion_model: str = "llama3.2:3b"          # Ollama instruct model for the friend
