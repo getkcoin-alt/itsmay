@@ -90,14 +90,23 @@ when you want it to fall silent and just remember.
 - ✅ **CI-tested:** profile store, voiceprint matching, when-to-talk gate +
   observe/talk mode override, persona registry, voice selection, ElevenLabs PCM,
   local-TTS streaming, and the full engine (talk/observe/follow-up + memory) over
-  real SQLite with fakes.
+  real SQLite with fakes. Also: concurrent-write safety (busy_timeout), the
+  per-profile session lock (no double sessions), vectorized memory search, the
+  observation guard (short/duplicate skips), and the unknown-voice hint throttle.
 - ⏳ **Mac-validate next (needs a mic + the models):** the live `mini run`/`enroll`
   loop — real Ollama reply, faster-whisper STT, Piper voice, Resemblyzer voiceprint
   recognition across two real speakers. Pull the network to prove it's offline.
 
+## First run & unknown voices
+- **First run** (`mini run` with nobody enrolled) walks you through enrollment
+  inline, then starts listening — no separate `mini enroll` step needed.
+- **Unknown mid-run voices** are never folded into a known person's memory
+  (no cross-contamination). Instead you get a throttled hint to run `mini enroll`
+  so the new person gets their own profile + memory.
+
 ## Known edges / next
-- Unknown mid-run voices are skipped (no cross-contamination); inline "want me to
-  remember you?" enrollment is a follow-up.
+- Inline "want me to remember you?" auto-enrollment *mid-conversation* (vs. the
+  first-run flow above) is a follow-up.
 - Barge-in during the bot's reply, sentence-streamed TTS (lower latency), and a
   true pitch-shifted child voice are polish items.
 - Heavier-than-Pi deps (torch). A lighter ONNX speaker model is the path to
