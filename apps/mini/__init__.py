@@ -9,6 +9,7 @@ Commands:
   mini memories <id>       show what the bot remembers about a profile
   mini forget <id>         delete a person entirely (voice + memories)
   mini reset               wipe ALL profiles + memories (start fresh)
+  mini voices [query]      list your ElevenLabs voices (filter, e.g. `mini voices neutral`)
 
 Fully local: Ollama LLM + faster-whisper STT + Piper TTS + fastembed memory, one
 SQLite file per device (COMPANION_SQLITE_PATH). Nothing leaves the machine.
@@ -110,6 +111,35 @@ async def _forget(profile_id: str) -> None:
           else f"{_YELLOW}Nothing to forget.{_RESET}")
 
 
+async def _voices(query: str | None = None) -> None:
+    from core.companion.voice import filter_voices, format_voice
+    from core.config import get_settings
+    from core.voice.tts_elevenlabs import ElevenLabsTTS
+
+    if not get_settings().elevenlabs_api_key:
+        print(f"{_YELLOW}No ELEVENLABS_API_KEY set — export your key first to list voices.{_RESET}")
+        return
+    tts = ElevenLabsTTS()
+    try:
+        voices = await tts.list_voices()
+    except Exception as e:
+        print(f"{_YELLOW}Couldn't fetch ElevenLabs voices: {e}{_RESET}")
+        return
+    finally:
+        await tts.aclose()
+
+    matched = filter_voices(voices, query)
+    hint = f" matching {query!r}" if query else ""
+    print(f"\n{_BOLD}ElevenLabs voices{_RESET}{hint}  {_DIM}({len(matched)}/{len(voices)}){_RESET}")
+    for v in matched:
+        name, vid, tags = format_voice(v)
+        print(f"  {_CYAN}{name}{_RESET}  {_DIM}{tags}{_RESET}\n     id: {vid}")
+    print(
+        f"\n{_DIM}Use one:  export ELEVENLABS_VOICE_ID=<id> COMPANION_VOICE=elevenlabs"
+        f"  ·  tip: `mini voices neutral` / `mini voices young`{_RESET}\n"
+    )
+
+
 async def _reset() -> None:
     from core.companion.profiles import ProfileStore, ensure_profile_schema
     from core.config import get_settings
@@ -152,6 +182,9 @@ def main() -> None:
         return
     if cmd == "reset":
         asyncio.run(_reset())
+        return
+    if cmd == "voices":
+        asyncio.run(_voices(args[1] if len(args) > 1 else None))
         return
     if cmd == "memories":
         if len(args) < 2:
