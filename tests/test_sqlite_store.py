@@ -156,6 +156,115 @@ async def test_content_exists_and_list_and_delete(stores):
     assert await sem.count(uid) == 1
 
 
+# ── concurrency: busy_timeout (P0-1) ──────────────────────────────
+
+
+async def test_concurrent_writes_do_not_lock(tmp_path):
+    """Two independent stores on the same file writing at once must not raise
+    `OperationalError: database is locked` — busy_timeout makes writers wait for
+    the WAL lock instead of failing immediately."""
+    import asyncio
+
+    path = ensure_schema(str(tmp_path / "concurrent.db"))
+    epi = SqliteEpisodicStore(path)
+    uid = await epi.get_or_create_user("karnveer")
+
+    # Separate store instances → separate connections → real lock contention,
+    # exactly the API-local-mode + companion sharing one file case.
+    writers = [SqliteSemanticStore(path) for _ in range(4)]
+
+    async def spam(store: SqliteSemanticStore, n: int) -> None:
+        for i in range(15):
+            await store.write(uid, "factual", f"w{n}-{i}", _vec(1, 0, 0, 0))
+
+    await asyncio.gather(*(spam(w, n) for n, w in enumerate(writers)))
+    assert await SqliteSemanticStore(path).count(uid) == 4 * 15
+
+
+def test_connect_sets_busy_timeout(tmp_path):
+    from core.memory.sqlite_util import connect
+
+    p = ensure_schema(str(tmp_path / "pragma.db"))
+    conn = connect(p)
+    try:
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    finally:
+        conn.close()
+
+
+# ── vectorized search parity + dim mismatch (P1-5, P2-7) ──────────
+
+
+async def test_search_matches_reference_cosine_ranking(stores):
+    """The vectorized cosine search returns the same rows, order, and scores as a
+    straightforward per-row reference implementation."""
+    epi, sem = stores
+    uid = await epi.get_or_create_user("karnveer")
+    vecs = {
+        "a": _vec(1.0, 0.2, 0.0, 0.0),
+        "b": _vec(0.1, 1.0, 0.3, 0.0),
+        "c": _vec(0.9, 0.1, 0.4, 0.2),
+        "d": _vec(0.0, 0.0, 1.0, 1.0),
+        "e": _vec(0.5, 0.5, 0.5, 0.5),
+    }
+    imps = {"a": 0.9, "b": 0.5, "c": 0.7, "d": 0.4, "e": 0.6}
+    for name, v in vecs.items():
+        await sem.write(uid, "factual", name, v, importance=imps[name])
+
+    q = _vec(0.8, 0.3, 0.1, 0.0)
+
+    def ref_rank(v, imp):
+        sim = float(np.dot(q, v) / (np.linalg.norm(q) * np.linalg.norm(v)))
+        return sim * (0.5 + 0.5 * imp), sim
+
+    expected = sorted(
+        ((ref_rank(v, imps[n])[0], ref_rank(v, imps[n])[1], n) for n, v in vecs.items()),
+        key=lambda t: t[0],
+        reverse=True,
+    )[:3]
+
+    hits = await sem.search(uid, q, k=3)
+    assert [h.content for h in hits] == [n for _, _, n in expected]
+    for h, (_, sim, _) in zip(hits, expected, strict=True):
+        assert h.similarity == pytest.approx(sim, abs=1e-5)
+
+
+async def test_search_skips_and_warns_on_dim_mismatch(stores, monkeypatch):
+    """A memory stored at a different embedding dim (model change) is skipped and
+    warned about once, without breaking search over the matching-dim rows."""
+    from core.memory import sqlite_store as store_mod
+
+    warnings: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        store_mod.log, "warning", lambda event, **kw: warnings.append((event, kw))
+    )
+
+    epi, sem = stores
+    uid = await epi.get_or_create_user("karnveer")
+    await sem.write(uid, "factual", "good", _vec(1, 0, 0, 0))
+    await sem.write(uid, "factual", "olddim", _vec(1, 0, 0, 0, 0, 0))  # 6-dim, stale
+
+    hits = await sem.search(uid, _vec(1, 0, 0, 0), k=5)
+    await sem.search(uid, _vec(1, 0, 0, 0), k=5)  # must NOT warn again (throttled)
+
+    assert [h.content for h in hits] == ["good"]  # mismatched row skipped, not crashed
+    dim_warnings = [w for w in warnings if w[0] == "sqlite.memory_dim_mismatch"]
+    assert len(dim_warnings) == 1
+    assert dim_warnings[0][1]["stored_dim"] == 6 and dim_warnings[0][1]["query_dim"] == 4
+
+
+# ── security: DB file perms ───────────────────────────────────────
+
+
+def test_new_db_file_is_owner_only(tmp_path):
+    import stat
+
+    p = ensure_schema(str(tmp_path / "perms.db"))
+    mode = stat.S_IMODE(__import__("os").stat(p).st_mode)
+    assert mode & 0o077 == 0  # no group/other access on a freshly-created DB
+
+
 # ── backend resolver ──────────────────────────────────────────────
 
 

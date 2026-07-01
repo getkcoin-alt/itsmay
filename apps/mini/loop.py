@@ -16,6 +16,7 @@ import contextlib
 import io
 import sys
 import threading
+import time
 import wave
 from dataclasses import dataclass, field
 
@@ -209,14 +210,20 @@ async def enroll_flow() -> None:
 
 # ── the conversation loop ─────────────────────────────────────────
 async def run_loop() -> None:
+    from core.companion.runtime import UnknownVoicePrompter
     from core.voice.stt_whisper import WhisperSTT
 
     eng = build_engine()
     if not await eng.profiles.all():
-        print("No one's enrolled yet — run `mini enroll` first.")
-        return
+        # First run on a fresh device: enroll the owner inline instead of bailing,
+        # so `mini run` just works. (Add more people later with `mini enroll`.)
+        print("No one's enrolled yet — let's set you up first.\n")
+        await enroll_flow()
+        eng = build_engine()  # reload with the new profile
+        print()
 
     stt = WhisperSTT(provider="local")
+    unknown = UnknownVoicePrompter()
     voices = available_voices() or [(None, "text-only", "none")]
     vi = select_index(voices, get_settings().companion_voice)
     tts, label, _ = voices[vi]
@@ -247,7 +254,11 @@ async def run_loop() -> None:
             )
             _, profile = await eng.identify_speaker(voiceprint)
             if profile is None:
-                print(f"  · (unrecognized voice) {text}")
+                # Unknown speaker: never fold their words into someone else's
+                # memory. Surface an actionable enroll hint (throttled).
+                hint = unknown.prompt(time.monotonic())
+                if hint:
+                    print(f"  · {hint}")
                 continue
 
             mode = "observe" if controls.observe.is_set() else "talk"

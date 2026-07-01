@@ -27,14 +27,22 @@ _WAKE_WORDS = {"hey", "ok", "okay", "yo", "hi", "hello", "um", "uh"}
 # How close a heard token must be to the nickname to count (STT mishears names —
 # "Pexel" vs "Pixel"). difflib ratio; 1.0 = identical.
 _NICK_FUZZ = 0.8
+# Fuzzy matching only kicks in for names this long. Short names (≤4 chars) must
+# match exactly: at 4 chars a single-edit neighbour ("Alex"→"Ales") already clears
+# the 0.8 ratio, so a common word would false-wake the bot. 5-char names still get
+# fuzz (e.g. "Pexel"↔"Pixel", one substitution, ratio 0.8). Also require the
+# lengths to be within one so a long word can't ratio-match a short name.
+_MIN_FUZZ_LEN = 5
 
 
 def _is_nickname(token: str, nickname: str) -> bool:
     token, nick = token.lower(), nickname.lower()
     if token == nick:
         return True
-    if len(nick) <= 3:
+    if len(nick) < _MIN_FUZZ_LEN:
         return False  # too short to fuzzy-match without false positives
+    if abs(len(token) - len(nick)) > 1:
+        return False  # a mishearing is ~one edit, not a length blow-out
     return difflib.SequenceMatcher(None, token, nick).ratio() >= _NICK_FUZZ
 
 

@@ -23,15 +23,16 @@ import numpy as np
 
 from core.logging import get_logger
 from core.memory.episodic import EpisodicStore
-from core.memory.sqlite_store import (
-    SqliteEpisodicStore,
-    _connect,
-    _from_blob,
-    _now,
-    _parse_ts,
-    _to_blob,
-)
+from core.memory.sqlite_store import SqliteEpisodicStore
 from core.memory.sqlite_store import ensure_schema as ensure_memory_schema
+from core.memory.sqlite_util import (
+    SqliteConnection,
+    connect,
+    from_blob,
+    now_iso,
+    parse_ts,
+    to_blob,
+)
 
 log = get_logger(__name__)
 
@@ -55,7 +56,7 @@ def ensure_profile_schema(path: str) -> str:
     """Create the memory schema (users/sessions/…) AND the voice_profiles table.
     Idempotent. Returns the resolved absolute path."""
     resolved = ensure_memory_schema(path)  # users table must exist for the FK
-    with closing(_connect(resolved)) as conn, conn:
+    with closing(connect(resolved)) as conn, conn:
         conn.executescript(_PROFILE_SCHEMA)
         # Additive: bring older DBs (pre-persona) up to date without a migration.
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(voice_profiles)")}
@@ -86,10 +87,10 @@ def _row_to_profile(r) -> Profile:
         person_name=r["person_name"],
         bot_nickname=r["bot_nickname"],
         persona=r["persona"] if "persona" in keys else None,
-        voiceprint=_from_blob(r["voiceprint"]),
+        voiceprint=from_blob(r["voiceprint"]),
         sample_count=int(r["sample_count"]),
-        created_at=_parse_ts(r["created_at"]) or datetime.now().astimezone(),
-        last_seen_at=_parse_ts(r["last_seen_at"]),
+        created_at=parse_ts(r["created_at"]) or datetime.now().astimezone(),
+        last_seen_at=parse_ts(r["last_seen_at"]),
     )
 
 
@@ -102,6 +103,7 @@ class ProfileStore:
 
     def __init__(self, path: str) -> None:
         self.path = path
+        self._db = SqliteConnection(path)
         self._episodic: EpisodicStore = SqliteEpisodicStore(path)
 
     # ── create / enroll ──────────────────────────────────────────
@@ -130,9 +132,9 @@ class ProfileStore:
         persona: str | None,
         voiceprint: np.ndarray | None,
     ) -> Profile:
-        now = _now()
-        with closing(_connect(self.path)) as conn, conn:
-            conn.execute(
+        now = now_iso()
+        with self._db.cursor(write=True) as cur:
+            cur.execute(
                 """
                 INSERT INTO voice_profiles
                     (id, user_id, person_name, bot_nickname, persona, voiceprint,
@@ -145,7 +147,7 @@ class ProfileStore:
                     person_name,
                     bot_nickname,
                     persona,
-                    _to_blob(voiceprint),
+                    to_blob(voiceprint),
                     now,
                     now,
                 ),
@@ -158,8 +160,8 @@ class ProfileStore:
             persona=persona,
             voiceprint=None if voiceprint is None else np.asarray(voiceprint, dtype=np.float32),
             sample_count=1,
-            created_at=_parse_ts(now) or datetime.now().astimezone(),
-            last_seen_at=_parse_ts(now),
+            created_at=parse_ts(now) or datetime.now().astimezone(),
+            last_seen_at=parse_ts(now),
         )
 
     # ── read ─────────────────────────────────────────────────────
@@ -167,8 +169,8 @@ class ProfileStore:
         return await asyncio.to_thread(self._all)
 
     def _all(self) -> list[Profile]:
-        with closing(_connect(self.path)) as conn:
-            rows = conn.execute(
+        with self._db.cursor() as cur:
+            rows = cur.execute(
                 "SELECT * FROM voice_profiles ORDER BY last_seen_at DESC"
             ).fetchall()
             return [_row_to_profile(r) for r in rows]
@@ -177,8 +179,8 @@ class ProfileStore:
         return await asyncio.to_thread(self._get, profile_id)
 
     def _get(self, profile_id: str) -> Profile | None:
-        with closing(_connect(self.path)) as conn:
-            r = conn.execute(
+        with self._db.cursor() as cur:
+            r = cur.execute(
                 "SELECT * FROM voice_profiles WHERE id = ?", (profile_id,)
             ).fetchone()
             return _row_to_profile(r) if r else None
@@ -191,20 +193,20 @@ class ProfileStore:
 
     def _blend_voiceprint(self, profile_id: str, sample: np.ndarray) -> None:
         sample = np.asarray(sample, dtype=np.float32)
-        with closing(_connect(self.path)) as conn, conn:
-            r = conn.execute(
+        with self._db.cursor(write=True) as cur:
+            r = cur.execute(
                 "SELECT voiceprint, sample_count FROM voice_profiles WHERE id = ?",
                 (profile_id,),
             ).fetchone()
             if r is None:
                 return
             n = int(r["sample_count"])
-            prev = _from_blob(r["voiceprint"])
+            prev = from_blob(r["voiceprint"])
             blended = sample if prev is None else (prev * n + sample) / (n + 1)
-            conn.execute(
+            cur.execute(
                 "UPDATE voice_profiles SET voiceprint = ?, sample_count = ?, last_seen_at = ? "
                 "WHERE id = ?",
-                (_to_blob(blended), n + 1, _now(), profile_id),
+                (to_blob(blended), n + 1, now_iso(), profile_id),
             )
 
     async def set_nickname(self, profile_id: str, nickname: str) -> None:
@@ -218,8 +220,8 @@ class ProfileStore:
 
     def _set_field(self, profile_id: str, field: str, value: str) -> None:
         # `field` is an internal literal ("bot_nickname"/"person_name"), never user input.
-        with closing(_connect(self.path)) as conn, conn:
-            conn.execute(
+        with self._db.cursor(write=True) as cur:
+            cur.execute(
                 f"UPDATE voice_profiles SET {field} = ? WHERE id = ?", (value, profile_id)
             )
 
@@ -227,10 +229,10 @@ class ProfileStore:
         await asyncio.to_thread(self._touch, profile_id)
 
     def _touch(self, profile_id: str) -> None:
-        with closing(_connect(self.path)) as conn, conn:
-            conn.execute(
+        with self._db.cursor(write=True) as cur:
+            cur.execute(
                 "UPDATE voice_profiles SET last_seen_at = ? WHERE id = ?",
-                (_now(), profile_id),
+                (now_iso(), profile_id),
             )
 
     # ── delete (forget a person) ─────────────────────────────────
@@ -240,13 +242,13 @@ class ProfileStore:
         return await asyncio.to_thread(self._forget, profile_id)
 
     def _forget(self, profile_id: str) -> bool:
-        with closing(_connect(self.path)) as conn, conn:
-            r = conn.execute(
+        with self._db.cursor(write=True) as cur:
+            r = cur.execute(
                 "SELECT user_id FROM voice_profiles WHERE id = ?", (profile_id,)
             ).fetchone()
             if r is None:
                 return False
-            conn.execute("DELETE FROM users WHERE id = ?", (r["user_id"],))
+            cur.execute("DELETE FROM users WHERE id = ?", (r["user_id"],))
             return True
 
     async def wipe_all(self) -> int:
@@ -255,7 +257,7 @@ class ProfileStore:
         return await asyncio.to_thread(self._wipe_all)
 
     def _wipe_all(self) -> int:
-        with closing(_connect(self.path)) as conn, conn:
-            n = conn.execute("SELECT count(*) FROM voice_profiles").fetchone()[0]
-            conn.execute("DELETE FROM users")  # cascades sessions/messages/memories/profiles
+        with self._db.cursor(write=True) as cur:
+            n = cur.execute("SELECT count(*) FROM voice_profiles").fetchone()[0]
+            cur.execute("DELETE FROM users")  # cascades sessions/messages/memories/profiles
             return int(n)
