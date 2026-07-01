@@ -116,6 +116,41 @@ def test_best_match_empty_and_none_voiceprints():
     assert m.profile_id == "b"  # None voiceprint skipped
 
 
+# ── speaker-id threshold from settings (P0-3) ─────────────────────
+
+
+def test_speaker_identifier_reads_threshold_from_settings(monkeypatch):
+    import types
+
+    import core.config as cfg
+    from core.companion import speaker_id as sid
+
+    # `_threshold_from_settings` imports get_settings from core.config lazily.
+    monkeypatch.setattr(
+        cfg, "get_settings", lambda: types.SimpleNamespace(speaker_match_threshold=0.42)
+    )
+    assert sid.SpeakerIdentifier().threshold == 0.42
+    assert sid.SpeakerIdentifier(threshold=0.9).threshold == 0.9  # explicit wins
+
+
+def test_speaker_identifier_logs_and_falls_back_on_bad_settings(monkeypatch):
+    import core.config as cfg
+    from core.companion import speaker_id as sid
+
+    def boom():
+        raise ValueError("SPEAKER_MATCH_THRESHOLD not a float")
+
+    monkeypatch.setattr(cfg, "get_settings", boom)
+    warnings: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        sid.log, "warning", lambda event, **kw: warnings.append((event, kw))
+    )
+
+    ident = sid.SpeakerIdentifier()  # threshold=None → reads settings → fails
+    assert ident.threshold == sid.DEFAULT_THRESHOLD  # loud fallback, not a crash
+    assert warnings and warnings[0][0] == "companion.speaker_threshold.fallback"
+
+
 # ── when-to-talk gate (pure) ──────────────────────────────────────
 
 
@@ -145,6 +180,21 @@ def test_gate_fuzzy_nickname_tolerates_stt_mishearing():
 def test_gate_short_nickname_requires_exact_match():
     assert detect_address("hi al how are you", "Al")[0] is True  # exact
     assert detect_address("hi ed how are you", "Al")[0] is False  # too short to fuzz
+
+
+def test_gate_four_char_name_does_not_false_wake():
+    # A 4-char nickname must match exactly — a one-edit common word shouldn't
+    # wake the bot (the tightened floor: fuzz only for names ≥5 chars).
+    assert detect_address("Alex, come here", "Alex")[0] is True  # exact still works
+    assert detect_address("the ales were cold", "Alex")[0] is False  # 1 edit, but 4-char
+    assert detect_address("flex your muscles", "Alex")[0] is False
+
+
+def test_gate_five_char_fuzzy_still_tolerates_one_mishearing():
+    # The tightening must not regress legit 5-char STT mishearings.
+    assert detect_address("hey Pixel", "Pexel")[0] is True  # one substitution
+    # …but a wildly different-length token can't ratio-match a short name.
+    assert detect_address("pixelation is cool", "Pexel")[0] is False
 
 
 def test_gate_follow_up_in_active_chat_speaks():

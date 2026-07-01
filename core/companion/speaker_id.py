@@ -32,6 +32,27 @@ log = get_logger(__name__)
 DEFAULT_THRESHOLD = 0.65
 
 
+def _threshold_from_settings() -> float:
+    """Read SPEAKER_MATCH_THRESHOLD, falling back to the default *loudly*.
+
+    A bad/unparseable value used to be swallowed silently by a bare `except`; now
+    we catch only the settings-load failure (e.g. a non-float env value trips
+    pydantic's ValidationError) and log the fallback so a misconfiguration is
+    visible instead of mysteriously reverting to 0.65.
+    """
+    try:
+        from core.config import get_settings
+
+        return get_settings().speaker_match_threshold
+    except Exception as e:  # settings load / validation failure only
+        log.warning(
+            "companion.speaker_threshold.fallback",
+            error=str(e),
+            default=DEFAULT_THRESHOLD,
+        )
+        return DEFAULT_THRESHOLD
+
+
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     denom = float(np.linalg.norm(a) * np.linalg.norm(b))
     if denom == 0.0:
@@ -113,12 +134,7 @@ class SpeakerIdentifier:
 
     def __init__(self, *, threshold: float | None = None, encoder: VoiceEncoder | None = None):
         if threshold is None:
-            try:
-                from core.config import get_settings
-
-                threshold = get_settings().speaker_match_threshold
-            except Exception:
-                threshold = DEFAULT_THRESHOLD
+            threshold = _threshold_from_settings()
         self.threshold = threshold
         self._encoder = encoder or VoiceEncoder()
 

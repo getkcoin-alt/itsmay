@@ -12,7 +12,9 @@ playback loop lives in `apps/mini` (device-only) and calls this engine.
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -26,6 +28,14 @@ from core.logging import get_logger
 
 log = get_logger(__name__)
 
+# Bound the per-profile in-memory maps so a long-running device that meets many
+# people (or churns profiles) can't grow them without limit. One device holds a
+# handful of people; this is generous. Eviction only drops the cached open-session
+# id / last-spoke time — memory itself is durable in SQLite.
+_MAX_TRACKED_PROFILES = 256
+# Observations shorter than this are too trivial to be worth a semantic row.
+_MIN_OBSERVE_CHARS = 12
+
 
 @dataclass(slots=True)
 class Turn:
@@ -33,6 +43,27 @@ class Turn:
     reason: str  # gate reason: addressed | follow_up | observing | no_speech
     reply: str
     profile_id: str | None
+
+
+class UnknownVoicePrompter:
+    """When `mini run` hears a voice it can't place, we don't cross-contaminate a
+    known person's memory — but we shouldn't silently ignore them either. This
+    decides *when* to surface an actionable 'run `mini enroll`' hint, throttled so
+    a stranger talking a lot doesn't spam the console: the hint shows on the first
+    unknown voice, then at most once per `cooldown_s`. Pure + testable (no audio).
+    """
+
+    def __init__(self, cooldown_s: float = 30.0) -> None:
+        self.cooldown_s = cooldown_s
+        self._last_hint_at: float | None = None
+
+    def prompt(self, now: float) -> str | None:
+        """Return the hint string to print for this unknown utterance, or None to
+        stay quiet (still within the cooldown)."""
+        if self._last_hint_at is not None and (now - self._last_hint_at) < self.cooldown_s:
+            return None
+        self._last_hint_at = now
+        return "I don't recognise this voice yet — run `mini enroll` so I can remember you."
 
 
 class CompanionEngine:
@@ -56,8 +87,9 @@ class CompanionEngine:
         self.identifier = identifier
         self.persona = persona
         self.active_window_s = active_window_s
-        self._sessions: dict[str, UUID] = {}  # profile_id -> session_id
-        self._last_spoke: dict[str, float] = {}  # profile_id -> monotonic ts
+        self._sessions: OrderedDict[str, UUID] = OrderedDict()  # profile_id -> session_id
+        self._last_spoke: OrderedDict[str, float] = OrderedDict()  # profile_id -> monotonic ts
+        self._session_locks: dict[str, asyncio.Lock] = {}  # per-profile open-session guard
 
     # ── speaker identification / enrollment ──────────────────────
     async def identify_speaker(
@@ -141,27 +173,61 @@ class CompanionEngine:
             )
             reply = await self._generate(messages)
 
-        # Always remember what they said — observing is still listening.
+        # Always remember what they said — observing is still listening. Keep the
+        # utterance in the episodic window (embedded, so recall works), but only
+        # write a durable semantic row when it's worth recalling later — a guard
+        # against a chatty device flooding the store with trivia/duplicates.
         await self.episodic.append_message(session_id, "user", text, embedding=emb)
-        await self.semantic.write(
-            profile.user_id, "episodic", text, emb, source="observed", importance=0.4
-        )
-        if decision.speak and reply:
-            reply_emb = await self.embedder.embed(reply)
-            await self.episodic.append_message(
-                session_id, "assistant", reply, embedding=reply_emb
+        if await self._worth_remembering(profile, text):
+            await self.semantic.write(
+                profile.user_id, "episodic", text, emb, source="observed", importance=0.4
             )
-            self._last_spoke[profile.id] = now
+        if decision.speak and reply:
+            # No embedding on the assistant turn: nothing vector-searches assistant
+            # messages, so embedding the reply is wasted work (a whole extra embed
+            # per spoken turn). It still lands in the episodic window verbatim.
+            await self.episodic.append_message(session_id, "assistant", reply)
+            self._remember_spoke(profile.id, now)
 
         await self.profiles.touch(profile.id)
         return Turn(decision.speak, decision.reason, reply, profile.id)
 
+    async def _worth_remembering(self, profile: Profile, text: str) -> bool:
+        """Cheap guard so observing a chatty room doesn't grow unbounded: skip
+        trivially short utterances and exact duplicates we've already stored."""
+        if len(text) < _MIN_OBSERVE_CHARS:
+            return False
+        try:
+            if await self.semantic.content_exists(profile.user_id, text):
+                return False
+        except Exception:  # dedup is best-effort — never block remembering on it
+            pass
+        return True
+
+    def _remember_spoke(self, profile_id: str, now: float) -> None:
+        self._last_spoke[profile_id] = now
+        self._last_spoke.move_to_end(profile_id)
+        while len(self._last_spoke) > _MAX_TRACKED_PROFILES:
+            self._last_spoke.popitem(last=False)
+
     async def _session_for(self, profile: Profile) -> UUID:
+        # Guard the check-then-open with a per-profile lock so two near-simultaneous
+        # utterances for the same person can't each open a fresh session.
         sid = self._sessions.get(profile.id)
-        if sid is None:
-            sid = await self.episodic.open_session(profile.user_id, channel="mini")
-            self._sessions[profile.id] = sid
-        return sid
+        if sid is not None:
+            self._sessions.move_to_end(profile.id)
+            return sid
+        lock = self._session_locks.setdefault(profile.id, asyncio.Lock())
+        async with lock:
+            sid = self._sessions.get(profile.id)  # re-check inside the lock
+            if sid is None:
+                sid = await self.episodic.open_session(profile.user_id, channel="mini")
+                self._sessions[profile.id] = sid
+                while len(self._sessions) > _MAX_TRACKED_PROFILES:
+                    evicted, _ = self._sessions.popitem(last=False)
+                    self._session_locks.pop(evicted, None)
+            self._sessions.move_to_end(profile.id)
+            return sid
 
     async def _generate(self, messages) -> str:
         parts: list[str] = []
