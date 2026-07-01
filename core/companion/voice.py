@@ -36,6 +36,34 @@ def available_voices() -> list[Voice]:
     return out
 
 
+def filter_voices(voices: list[dict], query: str | None) -> list[dict]:
+    """ElevenLabs voice dicts whose name / description / labels contain `query`
+    (case-insensitive). Empty query → all. Used by `mini voices [query]`."""
+    q = (query or "").strip().lower()
+    if not q:
+        return list(voices)
+    out = []
+    for v in voices:
+        labels = v.get("labels") or {}
+        hay = " ".join(
+            [v.get("name", ""), v.get("description", ""), *(str(x) for x in labels.values())]
+        ).lower()
+        if q in hay:
+            out.append(v)
+    return out
+
+
+def format_voice(v: dict) -> tuple[str, str, str]:
+    """(name, id, tag-line) for one ElevenLabs voice."""
+    labels = v.get("labels") or {}
+    tags = " · ".join(
+        str(labels[k])
+        for k in ("gender", "age", "accent", "description", "use_case")
+        if labels.get(k)
+    )
+    return v.get("name", ""), v.get("id", ""), tags
+
+
 def select_index(voices: list[Voice], pref: str | None) -> int:
     """Where to start: an explicit `pref` (piper/say/elevenlabs) by key, else
     'auto' → the first LOCAL voice (piper/say), else 0."""

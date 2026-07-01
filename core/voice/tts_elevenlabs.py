@@ -95,3 +95,25 @@ class ElevenLabsTTS:
             async for chunk in resp.aiter_bytes(chunk_size=4096):
                 if chunk:
                     yield chunk
+
+    async def list_voices(self) -> list[dict]:
+        """The account's available voices: [{id, name, labels, description, category}].
+        `labels` carries ElevenLabs' tags (gender, age, accent, description, use_case)."""
+        if not self.api_key:
+            raise RuntimeError("ELEVENLABS_API_KEY not set")
+        r = await self._client.get(
+            f"{self.BASE}/voices", headers={"xi-api-key": self.api_key}
+        )
+        r.raise_for_status()
+        out: list[dict] = []
+        for v in r.json().get("voices", []):
+            out.append(
+                {
+                    "id": v.get("voice_id", ""),
+                    "name": v.get("name", ""),
+                    "labels": v.get("labels") or {},
+                    "description": v.get("description") or "",
+                    "category": v.get("category", ""),
+                }
+            )
+        return out
