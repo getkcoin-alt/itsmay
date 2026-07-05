@@ -60,6 +60,10 @@ class InvocationContext:
     user_id: str | None = None
     session_id: str | None = None
     voice_mode: bool = False
+    # Tools (qualified names, e.g. "gmail.send") the operator explicitly approved
+    # for THIS request. `requires_approval` tools are refused server-side unless
+    # named here — set from the authenticated request body, never by the model.
+    approved_tools: frozenset[str] = frozenset()
     # Live service handles (populated by the chat router per request).
     user_uuid: Any | None = None  # UUID of the user row
     llm: Any | None = None  # core.brain.llm.LLMClient

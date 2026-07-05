@@ -113,3 +113,61 @@ def test_format_key_line_cooling_shows_cooldown_and_reset():
     assert "42s left" in line
     assert "resets in 5m" in line
     assert "low" in line  # 0% is well under 15%
+
+
+# --- concurrency: lease binds records to the right key (#14) ----------------
+
+
+def test_lease_returns_key_and_index():
+    pool = _pool(3)
+    lease = pool.lease()
+    assert lease is not None
+    assert lease.key == "k0" and lease.idx == 0
+    assert pool.lease().key == "k0"  # still usable → same key, not advanced
+
+
+def test_lease_isolates_concurrent_record_from_rotated_idx():
+    """Two interleaved turns share the pool. Turn A leases k0; turn B then
+    rate-limits its own key and advances `idx`. A's later header-record must
+    still land on k0 (its lease), not on whatever `idx` B moved to — the race
+    the old `self.idx`-based recording corrupted."""
+    pool = KeyPool.from_csv("k0,k1", label="test")
+    a = pool.lease()  # A holds k0 @ idx 0
+    b = pool.lease()  # B also holds k0 @ idx 0
+    pool.mark_rate_limited(30, lease=b)  # B cools k0, advances idx → 1
+    pool.update_from_headers({"x-ratelimit-remaining-tokens": "777"}, lease=a)
+    keys = pool.status()["keys"]
+    assert keys[0]["remaining_tokens"] == 777  # A's record on its leased key
+    assert keys[0]["last_status"] == 429  # k0 cooled by B
+    assert keys[1]["remaining_tokens"] is None  # innocent key never touched
+
+
+def test_mark_without_lease_falls_back_to_idx_backcompat():
+    pool = _pool(1)
+    pool.mark_rate_limited(15)  # no lease → uses self.idx (back-compat)
+    assert pool.status()["keys"][0]["last_status"] == 429
+
+
+def test_concurrent_lease_and_mark_is_thread_safe():
+    import threading
+
+    pool = KeyPool.from_csv(",".join(f"k{i}" for i in range(4)))
+    errors: list[Exception] = []
+
+    def worker() -> None:
+        try:
+            for _ in range(300):
+                lease = pool.lease()
+                pool.update_from_headers({"x-ratelimit-remaining-tokens": "10"}, lease=lease)
+                pool.mark_rate_limited(1, lease=lease)
+        except Exception as e:  # noqa: BLE001 — surface any race as a failure
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors  # no torn state / IndexError under contention
+    assert pool.size == 4  # pool intact
+    assert 0 <= pool.idx < 4

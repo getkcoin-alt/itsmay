@@ -248,7 +248,8 @@ class LLMClient:
         last_status: int | None = None
         last_body: bytes = b""
         for attempt in range(max_tries):
-            key = self.keys.current()
+            lease = self.keys.lease()
+            key = lease.key if lease else None
             headers = {"Content-Type": "application/json"}
             if key:
                 headers["Authorization"] = f"Bearer {key}"
@@ -259,7 +260,7 @@ class LLMClient:
                 last_status = 429
                 last_body = await resp.aread()  # read BEFORE closing
                 await resp.aclose()
-                self.keys.mark_rate_limited(retry_after)  # cools this key, advances
+                self.keys.mark_rate_limited(retry_after, lease=lease)  # cools this key, advances
                 if attempt < max_tries - 1:
                     # Rotate to the next key immediately; only pause if EVERY key
                     # is cooling down (then briefly, capped).
@@ -268,12 +269,12 @@ class LLMClient:
                         await asyncio.sleep(min(wait, 5.0))
                 continue
             if resp.status_code == 401 and self.keys.size > 1:
-                self.keys.mark_invalid()
+                self.keys.mark_invalid(lease=lease)
                 last_status = 401
                 last_body = await resp.aread()
                 await resp.aclose()
                 continue
-            self.keys.update_from_headers(resp.headers)
+            self.keys.update_from_headers(resp.headers, lease=lease)
             return resp
         # Exhausted — raise a clean error rather than returning a closed response.
         detail = last_body[:200].decode(errors="replace") if last_body else ""

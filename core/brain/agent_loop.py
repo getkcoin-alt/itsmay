@@ -74,6 +74,19 @@ class ToolStart:
 
 
 @dataclass(slots=True)
+class ApprovalRequired:
+    """A server tool was BLOCKED pending explicit user approval (not executed).
+
+    Consumers surface this to the user (SSE `approval_required`); the client
+    re-sends the request naming the tool in `approved_tools` once confirmed.
+    """
+
+    id: str
+    name: str
+    arguments: dict
+
+
+@dataclass(slots=True)
 class Done:
     """Terminal event. Carries token accounting and why the loop stopped."""
 
@@ -83,7 +96,18 @@ class Done:
     stop_reason: str = "stop"  # "stop" | "max_iters"
 
 
-LoopEvent = Token | ClientToolCall | ToolStart | ToolResult | Done
+LoopEvent = Token | ClientToolCall | ToolStart | ApprovalRequired | ToolResult | Done
+
+
+class ApprovalRequiredError(Exception):
+    """Raised by a router's `execute_server` when a tool needs explicit user
+    approval. The loop converts it into an `ApprovalRequired` event instead of
+    executing, and tells the model the call was blocked."""
+
+    def __init__(self, tool: str, arguments: dict | None = None) -> None:
+        super().__init__(f"{tool} requires explicit user approval")
+        self.tool = tool
+        self.arguments = arguments or {}
 
 
 class ToolRouter(Protocol):
@@ -179,6 +203,15 @@ async def run_tool_loop(
             yield ToolStart(id=c.get("id") or "", name=name)
             try:
                 result = await router.execute_server(name, c.get("arguments") or {}, ctx)
+            except ApprovalRequiredError as e:
+                # Blocked, not failed: surface the request to the user and tell
+                # the model so it can ask for confirmation in its reply.
+                yield ApprovalRequired(id=c.get("id") or "", name=e.tool, arguments=e.arguments)
+                result = (
+                    f"blocked: {e.tool} requires the user's explicit approval and was "
+                    "NOT executed. Tell the user exactly what you want to do and ask "
+                    "them to confirm — their client re-sends with the tool approved."
+                )
             except Exception as e:  # never let a tool blow up the whole turn
                 log.exception("agent_loop.tool_failed", tool=name)
                 result = f"error: {type(e).__name__}: {e}"
