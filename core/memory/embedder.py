@@ -98,20 +98,23 @@ class Embedder:
         attempts = max(self.keys.size, 1)
         last: httpx.Response | None = None
         for _ in range(attempts):
-            key = self.keys.current()
+            lease = self.keys.lease()
+            key = lease.key if lease else None
             headers = {"Content-Type": "application/json"}
             if key:
                 headers["Authorization"] = f"Bearer {key}"
             r = await self._client.post(url, json=payload, headers=headers)
             if r.status_code == 429:
-                self.keys.mark_rate_limited(parse_retry_after(r.headers.get("retry-after")))
+                self.keys.mark_rate_limited(
+                    parse_retry_after(r.headers.get("retry-after")), lease=lease
+                )
                 last = r
                 continue
             if r.status_code == 401 and self.keys.size > 1:
-                self.keys.mark_invalid()
+                self.keys.mark_invalid(lease=lease)
                 last = r
                 continue
-            self.keys.update_from_headers(r.headers)
+            self.keys.update_from_headers(r.headers, lease=lease)
             if r.status_code >= 400:
                 log.error("embed.openai.error", status=r.status_code, body=r.text[:400])
                 r.raise_for_status()

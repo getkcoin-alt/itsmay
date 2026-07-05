@@ -14,6 +14,7 @@ expert registry and everything else to the connector registry.
 from __future__ import annotations
 
 from core.agents.registry import AgentRegistry
+from core.brain.agent_loop import ApprovalRequiredError
 from core.connectors.base import InvocationContext
 from core.connectors.registry import Registry, flatten_result
 from core.logging import get_logger
@@ -54,6 +55,14 @@ class Orchestrator:
         if self._agents.has(name):
             result = await self._agents.run(name, args, ctx)
             return result.text
+        # Approval gate: a `requires_approval` tool never runs without the
+        # operator's explicit per-request consent (ctx.approved_tools, set from
+        # the authenticated request body). Raising (vs returning an error string)
+        # lets the loop emit a typed ApprovalRequired event clients can render.
+        rt = self._connectors.get_tool(name)
+        if rt is not None and rt.spec.requires_approval and name not in ctx.approved_tools:
+            log.warning("orchestrator.approval_blocked", tool=name)
+            raise ApprovalRequiredError(name, args)
         # In-process connector tool.
         res = await self._connectors.invoke(name, args, ctx)
         return flatten_result(res)

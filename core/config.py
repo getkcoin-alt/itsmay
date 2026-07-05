@@ -20,7 +20,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # ── Auth (Mac ↔ Railway public URL) ──────────────────────────
-    # Empty string disables auth (local dev only). Generate with `openssl rand -hex 32`.
+    # Empty string = open mode, which serves LOOPBACK callers only (local dev);
+    # remote requests are refused with 403 until a key is set (fail-closed —
+    # the API can run shell-executing agents, so it must never be open to the
+    # network by accident). Generate with `openssl rand -hex 32`.
     vault_api_key: str = ""
 
     # ── Postgres ──────────────────────────────────────────────────

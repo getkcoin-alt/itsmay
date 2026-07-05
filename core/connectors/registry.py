@@ -107,6 +107,21 @@ class Registry:
                 "ok": False,
                 "error": f"{qualified_name} runs on the {rt.spec.executor} client, not the server",
             }
+        # Server-side approval gate (defense in depth: every execution path —
+        # orchestrator, expert sub-agents — funnels through here). A tool marked
+        # `requires_approval` is refused unless the operator named it in this
+        # request's `approved_tools`; the flag is otherwise advisory-only.
+        if rt.spec.requires_approval and qualified_name not in ctx.approved_tools:
+            log.warning("registry.approval_blocked", tool=qualified_name)
+            effects = ", ".join(rt.spec.side_effects) or "side effects"
+            return {
+                "ok": False,
+                "error": (
+                    f"approval_required: {qualified_name} ({effects}) was NOT executed — "
+                    "it needs the user's explicit approval. Describe the exact action "
+                    "and ask the user to confirm."
+                ),
+            }
         try:
             result = await rt.connector.invoke(rt.spec.name, args, ctx)
             return {"ok": True, "result": result}
@@ -140,7 +155,7 @@ def _discover_into(reg: Registry, package_name: str) -> None:
     package = importlib.import_module(package_name)
     if not hasattr(package, "__path__"):
         return
-    for finder, modname, ispkg in pkgutil.iter_modules(package.__path__):
+    for _finder, modname, ispkg in pkgutil.iter_modules(package.__path__):
         if not ispkg:
             continue
         try:

@@ -12,7 +12,15 @@ from sse_starlette.sse import EventSourceResponse
 
 from apps.api.deps import get_embedder, get_episodic, get_llm, get_semantic
 from core.agents.registry import get_agent_registry
-from core.brain.agent_loop import ClientToolCall, Done, Token, ToolResult, ToolStart, run_tool_loop
+from core.brain.agent_loop import (
+    ApprovalRequired,
+    ClientToolCall,
+    Done,
+    Token,
+    ToolResult,
+    ToolStart,
+    run_tool_loop,
+)
 from core.brain.context_builder import build_messages
 from core.brain.llm import LLMClient
 from core.brain.orchestrator import Orchestrator
@@ -71,6 +79,10 @@ class ChatRequest(BaseModel):
     session_id: UUID | None = None
     channel: str = "api"
     temperature: float = 0.7
+    # Qualified tool names (e.g. "gmail.send") the user explicitly approved for
+    # THIS turn. `requires_approval` tools are blocked server-side unless named
+    # here; the `approval_required` SSE event tells the client what to confirm.
+    approved_tools: list[str] = Field(default_factory=list)
 
 
 @router.post("/chat")
@@ -157,6 +169,7 @@ async def chat(
             user_uuid=user_id,
             session_id=str(session_id),
             voice_mode=voice_mode,
+            approved_tools=frozenset(body.approved_tools),
             llm=llm,
             registry=connectors,
             embedder=embedder,
@@ -194,6 +207,15 @@ async def chat(
                     yield {
                         "event": "tool_start",
                         "data": json.dumps({"id": ev.id, "tool": ev.name}),
+                    }
+                elif isinstance(ev, ApprovalRequired):
+                    # Blocked server-side. The client shows a confirm prompt and
+                    # re-sends the message with `approved_tools: [ev.name]`.
+                    yield {
+                        "event": "approval_required",
+                        "data": json.dumps(
+                            {"id": ev.id, "name": ev.name, "arguments": ev.arguments}
+                        ),
                     }
                 elif isinstance(ev, ToolResult):
                     yield {

@@ -19,6 +19,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("numpy")
 
+import httpx  # noqa: E402
 import numpy as np  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -234,6 +235,7 @@ def _auth_app(token: str) -> FastAPI:
 
 
 def test_auth_open_mode_passes_everything():
+    # TestClient's in-process peer counts as local → open mode serves it.
     client = TestClient(_auth_app(""))  # empty token = open mode
     assert client.get("/v1/secret").status_code == 200
 
@@ -249,3 +251,40 @@ def test_auth_guards_protected_paths():
     ok = client.get("/v1/secret", headers={"Authorization": "Bearer s3cret"})
     assert ok.status_code == 200
     assert ok.json() == {"secret": True}
+
+
+# ── fail-closed open mode (#12): keyless server refuses remote peers ──
+
+
+def _peer_client(app: FastAPI, host: str) -> httpx.AsyncClient:
+    """An async client whose ASGI scope reports `host` as the TCP peer."""
+    transport = httpx.ASGITransport(app=app, client=(host, 4444))
+    return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+
+async def test_open_mode_refuses_remote_peer():
+    app = _auth_app("")  # no key configured
+    async with _peer_client(app, "203.0.113.9") as c:
+        r = await c.get("/v1/secret")
+        assert r.status_code == 403
+        assert "VAULT_API_KEY" in r.json()["error"]
+        # Even a bearer header doesn't help — there's no key to match.
+        r = await c.get("/v1/secret", headers={"Authorization": "Bearer anything"})
+        assert r.status_code == 403
+        # Always-open shell paths stay reachable (the page that says "set a key").
+        assert (await c.get("/")).status_code == 200
+
+
+async def test_open_mode_serves_loopback_peers():
+    app = _auth_app("")
+    for host in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):  # incl. dual-stack mapped
+        async with _peer_client(app, host) as c:
+            assert (await c.get("/v1/secret")).status_code == 200, host
+
+
+async def test_keyed_mode_serves_remote_peer_with_token():
+    app = _auth_app("s3cret")
+    async with _peer_client(app, "203.0.113.9") as c:
+        assert (await c.get("/v1/secret")).status_code == 401
+        ok = await c.get("/v1/secret", headers={"Authorization": "Bearer s3cret"})
+        assert ok.status_code == 200
