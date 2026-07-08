@@ -73,8 +73,11 @@ class SemanticStore:
         k: int = 8,
         *,
         min_importance: float = 0.0,
+        kinds: set[str] | None = None,
     ) -> list[RetrievedMemory]:
-        """Vector search with importance-weighted ranking."""
+        """Vector search with importance-weighted ranking. `kinds` restricts to
+        those memory kinds (e.g. {"procedural"} to retrieve only playbooks)."""
+        kind_filter = sorted(kinds) if kinds else None
         pool = await get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -86,6 +89,7 @@ class SemanticStore:
                   AND embedding IS NOT NULL
                   AND importance >= $4
                   AND (decay_after IS NULL OR decay_after > now())
+                  AND ($5::text[] IS NULL OR kind::text = ANY($5::text[]))
                 ORDER BY (1 - (embedding <=> $2)) * (0.5 + 0.5 * importance) DESC
                 LIMIT $3
                 """,
@@ -93,6 +97,7 @@ class SemanticStore:
                 query_embedding,
                 k,
                 min_importance,
+                kind_filter,
             )
             # bump usage counters in background-ish fashion (single statement)
             if rows:

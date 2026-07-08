@@ -91,6 +91,36 @@ async def test_search_ranks_by_cosine_similarity(stores):
     assert hits[0].similarity == pytest.approx(1.0, abs=1e-5)
 
 
+async def test_search_kinds_filter_returns_only_requested_kinds(stores):
+    epi, sem = stores
+    uid = await epi.get_or_create_user("karnveer")
+    await sem.write(uid, "factual", "a fact", _vec(1, 0, 0, 0))
+    await sem.write(uid, "procedural", "PLAYBOOK: do the thing", _vec(1, 0, 0, 0))
+
+    only_pb = await sem.search(uid, _vec(1, 0, 0, 0), k=5, kinds={"procedural"})
+    assert [h.content for h in only_pb] == ["PLAYBOOK: do the thing"]
+    assert only_pb[0].kind == "procedural"
+    # No filter → both kinds are eligible.
+    assert {h.kind for h in await sem.search(uid, _vec(1, 0, 0, 0), k=5)} == {
+        "factual",
+        "procedural",
+    }
+
+
+async def test_recent_tool_traces_newest_first_tool_only(stores):
+    epi, _ = stores
+    uid = await epi.get_or_create_user("karnveer")
+    sid = await epi.open_session(uid)
+    await epi.append_message(sid, "user", "do X")
+    await epi.append_message(sid, "tool", '{"goal": "X", "steps": []}')
+    await epi.append_message(sid, "assistant", "done")
+    await epi.append_message(sid, "tool", '{"goal": "Y", "steps": []}')
+
+    traces = await epi.recent_tool_traces(uid, limit=10)
+    assert len(traces) == 2  # only role="tool" rows
+    assert traces[0].startswith('{"goal": "Y"')  # newest-first
+
+
 async def test_search_importance_weighting_breaks_ties(stores):
     epi, sem = stores
     uid = await epi.get_or_create_user("karnveer")

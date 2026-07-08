@@ -362,10 +362,13 @@ async def _consolidate() -> None:
             resp = await client.post(f"{API_BASE}/v1/memory/consolidate", headers=headers)
             resp.raise_for_status()
             d = resp.json()
-            extracted = d.get("extracted", 0)
-            saved = d.get("saved", 0)
-            skipped = d.get("skipped", 0)
-            print(f"Consolidated — extracted: {extracted}, saved: {saved}, skipped: {skipped}")
+            facts = d.get("facts", d)  # back-compat if server returns the flat shape
+            wf = d.get("workflows", {})
+            print(
+                f"Consolidated — facts: {facts.get('saved', 0)} saved "
+                f"of {facts.get('extracted', 0)}; "
+                f"playbooks: {wf.get('saved', 0)} saved of {wf.get('playbooks', 0)} found"
+            )
     except httpx.ConnectError:
         print(f"{_RED}Cannot connect to {API_BASE} — is the server running?{_RESET}")
     except httpx.HTTPStatusError as e:

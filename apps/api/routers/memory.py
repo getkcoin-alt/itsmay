@@ -15,6 +15,7 @@ from core.logging import get_logger
 from core.memory.consolidator import consolidate_today
 from core.memory.embedder import Embedder
 from core.memory.episodic import EpisodicStore
+from core.memory.procedural import mine_workflows
 from core.memory.semantic import SemanticStore
 
 log = get_logger(__name__)
@@ -46,7 +47,11 @@ async def consolidate(
 ) -> dict:
     settings = get_settings()
     user_id = await episodic.get_or_create_user(settings.user_handle)
-    return await consolidate_today(llm, semantic, embedder, user_id)
+    # Two passes over today's activity: durable facts (from the conversation) and
+    # reusable workflows (from the tool traces). Both write long-term memories.
+    facts = await consolidate_today(llm, semantic, embedder, user_id)
+    workflows = await mine_workflows(llm, semantic, embedder, episodic, user_id)
+    return {"facts": facts, "workflows": workflows}
 
 
 class SeedBody(BaseModel):

@@ -43,8 +43,14 @@ def build_messages(
     recent_messages: list[Message],
     user_input: str,
     voice_mode: bool = False,
+    playbooks: list[str] | None = None,
 ) -> list[Message]:
-    """Compose the full prompt for one turn."""
+    """Compose the full prompt for one turn.
+
+    `playbooks` are procedural memories (retrieved workflows) — how the operator
+    has handled a similar request before. They're injected as *guidance* Scrappy
+    can follow, not commands to replay blindly.
+    """
     parts: list[str] = [
         load_system_prompt(voice_mode=voice_mode),
         "",
@@ -58,6 +64,15 @@ def build_messages(
     if retrieved_memories:
         parts += ["", "## RELEVANT MEMORIES (retrieved)"]
         parts += [f"- {m}" for m in retrieved_memories]
+
+    if playbooks:
+        parts += [
+            "",
+            "## PLAYBOOKS — how you've handled this before",
+            "Proven workflows from past turns. Follow the relevant one as a guide "
+            "(adapt as needed); it is not a script to run blindly.",
+        ]
+        parts += [f"- {p}" for p in playbooks]
 
     system_block = "\n".join(parts)
 
