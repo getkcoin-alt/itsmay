@@ -79,9 +79,10 @@ class FakeSemantic:
         self.rows = [r for r in self.rows if r.id != memory_id]
         return len(self.rows) < before
 
-    async def search(self, user_id, query_embedding, k=8, *, min_importance=0.0):
+    async def search(self, user_id, query_embedding, k=8, *, min_importance=0.0, kinds=None):
         out = []
-        for r in list(reversed(self.rows))[:k]:
+        pool = [r for r in reversed(self.rows) if kinds is None or r.kind in kinds]
+        for r in pool[:k]:
             out.append(
                 RetrievedMemory(
                     id=r.id,

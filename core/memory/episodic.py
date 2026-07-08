@@ -120,3 +120,23 @@ class EpisodicStore:
                 limit,
             )
             return [Message(role=r["role"], content=r["content"]) for r in rows]
+
+    async def recent_tool_traces(self, user_id: UUID, *, limit: int = 200) -> list[str]:
+        """Raw JSON of recent tool-trace rows (role='tool') across the user's
+        sessions, newest-first. Written per tool-using turn by the chat router;
+        the workflow miner distills recurring ones into procedural memories."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT m.content
+                FROM messages m
+                JOIN sessions s ON s.id = m.session_id
+                WHERE s.user_id = $1 AND m.role = 'tool'
+                ORDER BY m.created_at DESC
+                LIMIT $2
+                """,
+                user_id,
+                limit,
+            )
+            return [r["content"] for r in rows]

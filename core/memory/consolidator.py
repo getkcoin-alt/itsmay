@@ -81,8 +81,9 @@ async def consolidate_today(
         lines.append(f"{prefix}: {r['content'][:500]}")
     transcript = "\n".join(lines)[:8000]
 
-    # Ask the LLM for facts.
-    prompt = _CONSOLIDATION_PROMPT.format(transcript=transcript)
+    # Ask the LLM for facts. .replace (not .format): the prompt's JSON example
+    # contains literal braces that str.format would misread as fields.
+    prompt = _CONSOLIDATION_PROMPT.replace("{transcript}", transcript)
     messages = [
         Message(role="system", content="You are a memory extraction assistant."),
         Message(role="user", content=prompt),

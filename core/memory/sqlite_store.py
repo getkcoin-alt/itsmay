@@ -246,6 +246,26 @@ class SqliteEpisodicStore:
             ).fetchall()
             return [Message(role=r["role"], content=r["content"]) for r in rows]
 
+    async def recent_tool_traces(self, user_id: UUID, *, limit: int = 200) -> list[str]:
+        """Raw JSON of recent tool-trace rows (role='tool') for the user,
+        newest-first — the sovereign-path source for the workflow miner."""
+        return await asyncio.to_thread(self._recent_tool_traces, user_id, limit)
+
+    def _recent_tool_traces(self, user_id: UUID, limit: int) -> list[str]:
+        with self._db.cursor() as cur:
+            rows = cur.execute(
+                """
+                SELECT m.content
+                FROM messages m
+                JOIN sessions s ON s.id = m.session_id
+                WHERE s.user_id = ? AND m.role = 'tool'
+                ORDER BY m.created_at DESC, m.rowid DESC
+                LIMIT ?
+                """,
+                (str(user_id), limit),
+            ).fetchall()
+            return [r["content"] for r in rows]
+
 
 # ── semantic ──────────────────────────────────────────────────────────────
 
@@ -310,9 +330,10 @@ class SqliteSemanticStore:
         k: int = 8,
         *,
         min_importance: float = 0.0,
+        kinds: set[str] | None = None,
     ) -> list[RetrievedMemory]:
         return await asyncio.to_thread(
-            self._search, user_id, query_embedding, k, min_importance
+            self._search, user_id, query_embedding, k, min_importance, kinds
         )
 
     def _search(
@@ -321,6 +342,7 @@ class SqliteSemanticStore:
         query_embedding: np.ndarray,
         k: int,
         min_importance: float,
+        kinds: set[str] | None = None,
     ) -> list[RetrievedMemory]:
         q = np.asarray(query_embedding, dtype=np.float32)
         now = datetime.now(UTC)
@@ -340,6 +362,8 @@ class SqliteSemanticStore:
             candidates: list[sqlite3.Row] = []
             embeddings: list[np.ndarray] = []
             for r in rows:
+                if kinds is not None and r["kind"] not in kinds:
+                    continue  # caller wants only certain kinds (e.g. procedural)
                 decay = parse_ts(r["decay_after"])
                 if decay is not None and decay <= now:
                     continue  # expired

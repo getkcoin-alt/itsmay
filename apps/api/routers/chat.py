@@ -36,6 +36,11 @@ from core.memory.semantic import SemanticStore
 log = get_logger(__name__)
 router = APIRouter(prefix="/v1", tags=["chat"])
 
+# Fact-like memory kinds for the "RELEVANT MEMORIES" block. Procedural memories
+# (playbooks) are retrieved separately into their own "## PLAYBOOKS" block, so
+# they don't double-appear here.
+_FACT_KINDS = {"factual", "semantic", "reflection", "episodic"}
+
 
 def _classify_chat_error(exc: Exception, llm: LLMClient) -> dict:
     """Turn a raw stream exception into a structured error event with a calm,
@@ -128,11 +133,17 @@ async def chat(
     recent_n = 6 if voice_mode else settings.recent_message_window
 
     recent = await episodic.recent_window(session_id, recent_n)
-    retrieved = (
-        await semantic.search(user_id, user_embedding, k=retrieval_k)
-        if user_embedding is not None
-        else []
-    )
+    if user_embedding is not None:
+        retrieved = await semantic.search(
+            user_id, user_embedding, k=retrieval_k, kinds=_FACT_KINDS
+        )
+        # A couple of relevant playbooks (procedural memory) for this goal.
+        playbooks = await semantic.search(
+            user_id, user_embedding, k=2, kinds={"procedural"}
+        )
+    else:
+        retrieved = []
+        playbooks = []
     experts = [spec.tool_name for spec in get_agent_registry().available]
     self_ctx = await render_self_context(experts=experts)
 
@@ -145,6 +156,7 @@ async def chat(
         recent_messages=recent_for_prompt,
         user_input=body.message,
         voice_mode=voice_mode,
+        playbooks=[m.content for m in playbooks],
     )
 
     async def event_stream():
@@ -155,6 +167,7 @@ async def chat(
         }
 
         full: list[str] = []
+        tool_steps: list[dict] = []  # this turn's tool calls → a workflow trace
         t0 = time.perf_counter()
         prompt_tokens = None
         completion_tokens = None
@@ -203,6 +216,7 @@ async def chat(
                             }
                         ),
                     }
+                    tool_steps.append({"tool": ev.name, "ok": True})
                 elif isinstance(ev, ToolStart):
                     yield {
                         "event": "tool_start",
@@ -222,6 +236,9 @@ async def chat(
                         "event": "status",
                         "data": json.dumps({"tool": ev.name, "result": ev.summary}),
                     }
+                    tool_steps.append(
+                        {"tool": ev.name, "ok": not ev.summary.startswith(("error:", "blocked:"))}
+                    )
                 elif isinstance(ev, Done):
                     prompt_tokens = ev.prompt_tokens
                     completion_tokens = ev.completion_tokens
@@ -248,6 +265,16 @@ async def chat(
             )
         except Exception as e:
             log.warning("chat.persist_assistant_failed", err=str(e))
+
+        # Record the workflow trace for this turn (only if tools ran) as a
+        # role="tool" row — the raw material the nightly miner turns into
+        # playbooks. Best-effort; never breaks the response.
+        if tool_steps:
+            try:
+                trace = json.dumps({"goal": body.message[:200], "steps": tool_steps})
+                await episodic.append_message(session_id, "tool", trace)
+            except Exception as e:
+                log.warning("chat.persist_trace_failed", err=str(e))
 
         yield {
             "event": "done",
