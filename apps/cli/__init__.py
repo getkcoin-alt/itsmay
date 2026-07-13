@@ -11,6 +11,7 @@ Usage:
   scrappy up                   run the backend + worker together (one terminal)
   scrappy worker               run the local executor — agents run on THIS Mac
   scrappy status               server health + worker connected + memory count
+  scrappy awaken               speak his first words (writes birth memories on first run)
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
@@ -375,6 +376,39 @@ async def _consolidate() -> None:
         print(f"{_RED}HTTP {e.response.status_code}: {e.response.text[:200]}{_RESET}")
     except Exception as e:
         print(f"{_RED}Consolidation failed: {e}{_RESET}")
+
+
+async def _awaken() -> None:
+    """Call POST /v1/identity/awaken and speak Scrappy's first words."""
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(f"{API_BASE}/v1/identity/awaken", headers=headers)
+            resp.raise_for_status()
+            d = resp.json()
+            inv = d.get("inventory", {})
+            if d.get("born"):
+                print(
+                    f"\n{_BOLD}{_GREEN}⚡ Scrappy is awake.{_RESET}  "
+                    f"{_DIM}(born {d.get('born_at')}){_RESET}\n"
+                )
+            else:
+                print(f"\n{_DIM}(already awake){_RESET}\n")
+            print(f"{_CYAN}{d.get('first_words', '')}{_RESET}\n")
+            print(
+                f"{_DIM}v{inv.get('version', '?')} · {inv.get('model', '?')} · "
+                f"{len(inv.get('connectors') or [])} connectors · "
+                f"{len(inv.get('experts') or [])} experts · "
+                f"{inv.get('memory_count', 0)} memories{_RESET}"
+            )
+    except httpx.ConnectError:
+        print(f"{_RED}Cannot connect to {API_BASE} — is the server running?{_RESET}")
+    except httpx.HTTPStatusError as e:
+        print(f"{_RED}HTTP {e.response.status_code}: {e.response.text[:200]}{_RESET}")
+    except Exception as e:
+        print(f"{_RED}Awaken failed: {e}{_RESET}")
 
 
 def _render_agent_event(kind: str, text: str) -> None:
@@ -946,6 +980,10 @@ def main() -> None:
 
     if args and args[0] == "seed":
         asyncio.run(_seed())
+        return
+
+    if args and args[0] == "awaken":
+        asyncio.run(_awaken())
         return
 
     if args and args[0] == "agents":
