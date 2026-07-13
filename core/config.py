@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     mission_target_date: date = date(2026, 11, 23)
     mission_statement: str = "Achieve financial freedom"
 
+    # ── Self-modification (Epic 5) ────────────────────────────────
+    # Master switch for Scrappy changing his own code. On by default, but every
+    # change still passes the guardrails (core/identity/self_guard.py) — protected
+    # files are refused and the operator approves the apply. Kill switch:
+    # SELF_MODIFY=off (accepts off/false/0/no), or `scrappy freeze` at runtime.
+    self_modify: bool = True
+
     # ── Gmail connector ───────────────────────────────────────────
     # JSON blob from scripts/gmail_auth.py. If unset, the Gmail connector
     # and Email expert are silently absent from the toolbox.
