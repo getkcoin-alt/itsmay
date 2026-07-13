@@ -12,6 +12,7 @@ Usage:
   scrappy worker               run the local executor — agents run on THIS Mac
   scrappy status               server health + worker connected + memory count
   scrappy awaken               speak his first words (writes birth memories on first run)
+  scrappy freeze / unfreeze    kill switch for self-modification (Epic 5 guardrail)
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
@@ -409,6 +410,31 @@ async def _awaken() -> None:
         print(f"{_RED}HTTP {e.response.status_code}: {e.response.text[:200]}{_RESET}")
     except Exception as e:
         print(f"{_RED}Awaken failed: {e}{_RESET}")
+
+
+def _freeze() -> None:
+    """Engage the self-modification kill switch (local marker the server reads)."""
+    from core.identity.self_guard import freeze
+
+    m = freeze()
+    print(
+        f"{_YELLOW}❄️  Self-modification FROZEN.{_RESET} "
+        f"{_DIM}Scrappy can't change his own code until `scrappy unfreeze`."
+        f"\n  marker: {m}{_RESET}"
+    )
+
+
+def _unfreeze() -> None:
+    """Release the self-modification kill switch."""
+    from core.config import get_settings
+    from core.identity.self_guard import unfreeze
+
+    if unfreeze():
+        print(f"{_GREEN}Self-modification unfrozen.{_RESET}")
+    else:
+        print(f"{_DIM}Was not frozen.{_RESET}")
+    if not get_settings().self_modify:
+        print(f"{_YELLOW}Note: SELF_MODIFY is off in config — self-modification stays disabled.{_RESET}")
 
 
 def _render_agent_event(kind: str, text: str) -> None:
@@ -984,6 +1010,14 @@ def main() -> None:
 
     if args and args[0] == "awaken":
         asyncio.run(_awaken())
+        return
+
+    if args and args[0] == "freeze":
+        _freeze()
+        return
+
+    if args and args[0] == "unfreeze":
+        _unfreeze()
         return
 
     if args and args[0] == "agents":
