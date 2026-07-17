@@ -102,15 +102,26 @@ class VADRecorder:
 class BargeInMonitor:
     """Background thread that fires `detected` when sustained speech is heard.
 
-    Start before TTS plays. If `detected` is set, the caller should interrupt
-    the AudioPlayer and start a new recording turn immediately.
+    Start when TTS begins playing. If `detected` is set, the caller should
+    interrupt the AudioPlayer and start a new recording turn immediately.
+
+    ``warmup_ms`` — ignore all mic input for this many milliseconds after
+    `start()`.  This prevents the user's own voice tail (still in the air or
+    reverberating through the mic) from being counted as a barge-in.  A value
+    of 400-600 ms works well in practice.
     """
 
-    def __init__(self, aggressiveness: int = 2, trigger_ms: int = 160) -> None:
+    def __init__(
+        self,
+        aggressiveness: int = 2,
+        trigger_ms: int = 160,
+        warmup_ms: int = 500,
+    ) -> None:
         if not _HAS_WEBRTCVAD:
             raise ImportError("webrtcvad is not installed")
         self._vad = _webrtcvad.Vad(aggressiveness)
         self._trigger_frames = max(1, trigger_ms // FRAME_MS)
+        self._warmup_frames = max(0, warmup_ms // FRAME_MS)
         self.detected = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -129,6 +140,7 @@ class BargeInMonitor:
 
     def _run(self) -> None:
         speech_count = 0
+        warmup_remaining = self._warmup_frames
         try:
             with sd.RawInputStream(
                 samplerate=SAMPLE_RATE,
@@ -140,6 +152,11 @@ class BargeInMonitor:
                     raw, _ = stream.read(FRAME_SAMPLES)
                     frame = bytes(raw)[:FRAME_BYTES]
                     if len(frame) < FRAME_BYTES:
+                        continue
+                    # Skip frames during warmup so the user's voice tail
+                    # doesn't trigger a false barge-in.
+                    if warmup_remaining > 0:
+                        warmup_remaining -= 1
                         continue
                     try:
                         is_speech = self._vad.is_speech(frame, SAMPLE_RATE)

@@ -462,6 +462,47 @@ def pop_phrase(buf: str) -> tuple[str | None, str]:
     return None, buf
 
 
+class TerminalSpinner:
+    def __init__(self, message: str = "") -> None:
+        self.message = message
+        self.task = None
+        self._running = False
+
+    def start(self) -> None:
+        if not self._running:
+            self._running = True
+            self.task = asyncio.create_task(self._spin())
+
+    def stop(self) -> None:
+        if self._running:
+            self._running = False
+            if self.task:
+                self.task.cancel()
+                self.task = None
+
+    async def _spin(self) -> None:
+        chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        idx = 0
+        first = True
+        try:
+            while self._running:
+                if first:
+                    sys.stdout.write(chars[idx])
+                    first = False
+                else:
+                    sys.stdout.write(f"\b{chars[idx]}")
+                sys.stdout.flush()
+                idx = (idx + 1) % len(chars)
+                await asyncio.sleep(0.08)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if not first:
+                # Erase the spinner character: backspace, space, backspace
+                sys.stdout.write("\b \b")
+                sys.stdout.flush()
+
+
 # ── main loop ───────────────────────────────────────────────────
 async def _record_audio(mute: threading.Event | None = None) -> np.ndarray | None:
     """Hands-free capture of one utterance.
@@ -475,7 +516,7 @@ async def _record_audio(mute: threading.Event | None = None) -> np.ndarray | Non
         try:
             recorder = VADRecorder(aggressiveness=VAD_AGGRESSIVENESS, silence_ms=VAD_SILENCE_MS)
             print("\n● listening…", flush=True)
-            return await asyncio.to_thread(recorder.record)
+            return await asyncio.to_thread(recorder.record, mute)
         except ImportError:
             pass  # no webrtcvad → energy VAD below
         except Exception as e:
@@ -501,10 +542,13 @@ async def turn(
 ) -> str | None:
     """One VAD-powered round (or push-to-talk fallback). Returns updated session_id."""
     audio = await _record_audio(mute)
+    if mute and mute.is_set():
+        return session_id
     if audio is None or audio.size < SAMPLE_RATE * MIN_RECORDING_SEC:
         print("(too short, skipped)")
         return session_id
 
+    spinner: TerminalSpinner | None = None
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         wav_path = Path(tmp.name)
     try:
@@ -524,11 +568,27 @@ async def turn(
     print(f"\nyou: {text}")
     print("scrappy: ", end="", flush=True)
 
+    spinner = TerminalSpinner()
+    spinner.start()
+
     full_response: list[str] = []
     buf = ""
     tts_tasks: list[asyncio.Task] = []
     new_session_id = session_id
     barge_in: BargeInMonitor | None = None
+    _barge_in_armed = False  # only start monitoring after first TTS queued
+
+    def _arm_barge_in() -> None:
+        """Lazily start barge-in monitoring the first time TTS audio plays."""
+        nonlocal barge_in, _barge_in_armed
+        if _barge_in_armed or not _HAS_VAD:
+            return
+        _barge_in_armed = True
+        try:
+            barge_in = BargeInMonitor(aggressiveness=VAD_AGGRESSIVENESS)
+            barge_in.start()
+        except Exception:
+            barge_in = None
 
     async def synth(snippet: str) -> None:
         out = Path(tempfile.mkstemp(suffix=".mp3")[1])
@@ -538,17 +598,17 @@ async def turn(
             print(f"\n[tts error] {e}", file=sys.stderr)
             out.unlink(missing_ok=True)
             return
+        # Arm barge-in right as audio is about to play — this is the first
+        # moment the user might want to interrupt.
+        _arm_barge_in()
         player.play(out)
-
-    if _HAS_VAD:
-        try:
-            barge_in = BargeInMonitor(aggressiveness=VAD_AGGRESSIVENESS)
-            barge_in.start()
-        except Exception:
-            barge_in = None
 
     try:
         async for evt, data in stream_chat(client, text, session_id):
+            if spinner:
+                spinner.stop()
+                spinner = None
+
             if barge_in and barge_in.detected.is_set():
                 print("\n⚡ [barge-in]", flush=True)
                 player.interrupt()
@@ -575,7 +635,10 @@ async def turn(
                             tts_tasks.append(asyncio.create_task(synth(buf.strip())))
                             buf = ""
                         tts_tasks.append(asyncio.create_task(synth(ack)))
-                    print(f"\n  → {tool}…", flush=True)
+                    print(f"\n  → {tool}… ", end="", flush=True)
+                    # Start a new spinner for the duration of the tool execution
+                    spinner = TerminalSpinner()
+                    spinner.start()
                 except json.JSONDecodeError:
                     pass
             elif evt == "status":
@@ -623,6 +686,8 @@ async def turn(
         print(f"\n[chat network error] {type(e).__name__}: {e}", file=sys.stderr)
         return new_session_id
     finally:
+        if spinner:
+            spinner.stop()
         if barge_in:
             barge_in.stop()
 
