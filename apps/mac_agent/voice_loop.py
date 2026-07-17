@@ -66,6 +66,7 @@ _claude_session: dict[str, str | None] = {"window_id": None}
 
 VAD_AGGRESSIVENESS = int(os.environ.get("VAD_AGGRESSIVENESS", "2"))
 VAD_SILENCE_MS = int(os.environ.get("VAD_SILENCE_MS", "700"))
+BARGE_IN_ENABLED = os.environ.get("BARGE_IN_ENABLED", "false").lower() in ("true", "1", "yes")
 
 _TOOL_ACK: dict[str, str] = {
     "web": "Searching.",
@@ -549,61 +550,62 @@ async def turn(
         return session_id
 
     spinner: TerminalSpinner | None = None
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        wav_path = Path(tmp.name)
-    try:
-        write_wav(audio, wav_path)
-        print("⌁ transcribing…", flush=True)
-        text = await transcribe(client, wav_path)
-    except httpx.HTTPError as e:
-        print(f"\n[transcribe failed] {type(e).__name__}: {e}", file=sys.stderr)
-        return session_id
-    finally:
-        wav_path.unlink(missing_ok=True)
-
-    if not text.strip():
-        print("(silence)")
-        return session_id
-
-    print(f"\nyou: {text}")
-    print("scrappy: ", end="", flush=True)
-
-    spinner = TerminalSpinner()
-    spinner.start()
-
-    full_response: list[str] = []
-    buf = ""
-    tts_tasks: list[asyncio.Task] = []
-    new_session_id = session_id
     barge_in: BargeInMonitor | None = None
     _barge_in_armed = False  # only start monitoring after first TTS queued
 
-    def _arm_barge_in() -> None:
-        """Lazily start barge-in monitoring the first time TTS audio plays."""
-        nonlocal barge_in, _barge_in_armed
-        if _barge_in_armed or not _HAS_VAD:
-            return
-        _barge_in_armed = True
-        try:
-            barge_in = BargeInMonitor(aggressiveness=VAD_AGGRESSIVENESS)
-            barge_in.start()
-        except Exception:
-            barge_in = None
-
-    async def synth(snippet: str) -> None:
-        out = Path(tempfile.mkstemp(suffix=".mp3")[1])
-        try:
-            await tts_to_file(client, snippet, out)
-        except Exception as e:
-            print(f"\n[tts error] {e}", file=sys.stderr)
-            out.unlink(missing_ok=True)
-            return
-        # Arm barge-in right as audio is about to play — this is the first
-        # moment the user might want to interrupt.
-        _arm_barge_in()
-        player.play(out)
-
     try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            wav_path = Path(tmp.name)
+        try:
+            write_wav(audio, wav_path)
+            print("⌁ transcribing…", flush=True)
+            text = await transcribe(client, wav_path)
+        except httpx.HTTPError as e:
+            print(f"\n[transcribe failed] {type(e).__name__}: {e}", file=sys.stderr)
+            return session_id
+        finally:
+            wav_path.unlink(missing_ok=True)
+
+        if not text.strip():
+            print("(silence)")
+            return session_id
+
+        print(f"\nyou: {text}")
+        print("scrappy: ", end="", flush=True)
+
+        spinner = TerminalSpinner()
+        spinner.start()
+
+        full_response: list[str] = []
+        buf = ""
+        tts_tasks: list[asyncio.Task] = []
+        new_session_id = session_id
+
+        def _arm_barge_in() -> None:
+            """Lazily start barge-in monitoring the first time TTS audio plays."""
+            nonlocal barge_in, _barge_in_armed
+            if _barge_in_armed or not _HAS_VAD or not BARGE_IN_ENABLED:
+                return
+            _barge_in_armed = True
+            try:
+                barge_in = BargeInMonitor(aggressiveness=VAD_AGGRESSIVENESS)
+                barge_in.start()
+            except Exception:
+                barge_in = None
+
+        async def synth(snippet: str) -> None:
+            out = Path(tempfile.mkstemp(suffix=".mp3")[1])
+            try:
+                await tts_to_file(client, snippet, out)
+            except Exception as e:
+                print(f"\n[tts error] {e}", file=sys.stderr)
+                out.unlink(missing_ok=True)
+                return
+            # Arm barge-in right as audio is about to play — this is the first
+            # moment the user might want to interrupt.
+            _arm_barge_in()
+            player.play(out)
+
         async for evt, data in stream_chat(client, text, session_id):
             if spinner:
                 spinner.stop()
@@ -678,6 +680,18 @@ async def turn(
                     print(f"\n[chat error] {data}", file=sys.stderr)
                 tts_tasks.append(asyncio.create_task(synth(speak)))
                 break
+
+        interrupted = barge_in is not None and barge_in.detected.is_set()
+        if buf.strip() and not interrupted:
+            tts_tasks.append(asyncio.create_task(synth(buf.strip())))
+
+        if tts_tasks:
+            await asyncio.gather(*tts_tasks, return_exceptions=True)
+        if not interrupted:
+            await player.drain()
+        print()
+        return new_session_id
+
     except httpx.HTTPStatusError as e:
         body = (e.response.text or "")[:300] if e.response is not None else ""
         print(f"\n[chat http {e.response.status_code}] {body}", file=sys.stderr)
@@ -690,17 +704,6 @@ async def turn(
             spinner.stop()
         if barge_in:
             barge_in.stop()
-
-    interrupted = barge_in is not None and barge_in.detected.is_set()
-    if buf.strip() and not interrupted:
-        tts_tasks.append(asyncio.create_task(synth(buf.strip())))
-
-    if tts_tasks:
-        await asyncio.gather(*tts_tasks, return_exceptions=True)
-    if not interrupted:
-        await player.drain()
-    print()
-    return new_session_id
 
 
 def _mute_watcher(muted: threading.Event) -> None:
