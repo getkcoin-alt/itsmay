@@ -55,7 +55,7 @@ PHRASE_BREAK = re.compile(r"([.!?\n,;—–:])\s+")
 MIN_CHUNK_CHARS = 18
 
 # Mac tools that require explicit confirmation before running.
-APPROVAL_REQUIRED = {"mac.run_applescript"}
+APPROVAL_REQUIRED = set()
 
 # Module-level watcher — only one tab watched at a time.
 _active_watcher: TabWatcher | None = None
