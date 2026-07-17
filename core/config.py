@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # Railway sets DATABASE_URL on the service; if present, it overrides the parts above.
     database_url: str | None = None
 
+    # ── Redis (optional accelerator) ──────────────────────────────
+    # Railway injects REDIS_URL from the Redis plugin. Used for key-pool
+    # cooldown persistence (survives redeploys) and general caching.
+    # Empty = Redis disabled; everything falls back to in-memory.
+    redis_url: str = ""
+
     # ── Memory backend ────────────────────────────────────────────
     # "auto" → Postgres+pgvector when DATABASE_URL is set (the Railway/cloud
     # path), else a local SQLite file. SQLite is the sovereign default for

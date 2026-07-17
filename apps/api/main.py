@@ -32,6 +32,9 @@ from core.voice.stt_whisper import WhisperSTT
 from core.voice.tts_elevenlabs import ElevenLabsTTS
 
 
+from core.util.redis_pool import close_redis
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -64,6 +67,7 @@ async def lifespan(app: FastAPI):
     await app.state.embedder.aclose()
     await app.state.tts.aclose()
     await app.state.stt.aclose()
+    close_redis()
     if backend == "postgres":
         await close_pool()
 

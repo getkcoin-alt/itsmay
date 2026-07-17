@@ -14,6 +14,14 @@ Rotation triggers:
 If every key is in cooldown, `lease()` still returns the soonest-available one
 rather than raising — let the upstream call hit a 429 and bubble.
 
+Redis persistence (optional)
+----------------------------
+When ``REDIS_URL`` is configured, cooldown state is written to Redis with TTLs
+matching the actual cooldown duration. This way a Railway redeploy doesn't
+"forget" that a key is rate-limited and immediately re-hammer it. If Redis is
+unavailable, everything works in-memory as before — Redis is an *accelerator*,
+never a hard dependency.
+
 Concurrency
 -----------
 One pool instance is shared across every concurrent turn. `lease()` hands out a
@@ -83,12 +91,91 @@ class KeyPool:
         proactive_token_floor: int = 500,
     ) -> KeyPool:
         keys = [k.strip() for k in (csv or "").split(",") if k.strip()]
-        return cls(
+        pool = cls(
             states=[_KeyState(k) for k in keys],
             label=label,
             proactive_request_floor=proactive_request_floor,
             proactive_token_floor=proactive_token_floor,
         )
+        # Hydrate cooldown state from Redis on construction so freshly-deployed
+        # containers know which keys are still rate-limited.
+        pool._hydrate_from_redis()
+        return pool
+
+    # ── Redis helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def _redis():
+        """Return the shared Redis client, or None."""
+        try:
+            from core.util.redis_pool import get_redis
+            return get_redis()
+        except Exception:
+            return None
+
+    def _redis_key(self, idx: int, suffix: str) -> str:
+        return f"keypool:{self.label}:{idx}:{suffix}"
+
+    def _hydrate_from_redis(self) -> None:
+        """Load surviving cooldown state from Redis (if available)."""
+        r = self._redis()
+        if not r or not self.states:
+            return
+        try:
+            now = time.time()
+            for i, s in enumerate(self.states):
+                ttl = r.ttl(self._redis_key(i, "cooldown"))
+                if ttl and ttl > 0:
+                    s.cooldown_until = now + ttl
+                    log.info(
+                        "keypool.redis_hydrate",
+                        label=self.label,
+                        idx=i,
+                        cooldown_remaining=ttl,
+                    )
+                # Restore remaining token counts
+                rt = r.get(self._redis_key(i, "remaining_tokens"))
+                if rt is not None:
+                    try:
+                        s.remaining_tokens = int(rt)
+                    except (TypeError, ValueError):
+                        pass
+                lt = r.get(self._redis_key(i, "limit_tokens"))
+                if lt is not None:
+                    try:
+                        s.limit_tokens = int(lt)
+                    except (TypeError, ValueError):
+                        pass
+        except Exception as exc:
+            log.warning("keypool.redis_hydrate_failed", error=str(exc))
+
+    def _persist_cooldown(self, idx: int, cooldown_sec: float) -> None:
+        """Write cooldown to Redis with matching TTL (fire-and-forget)."""
+        r = self._redis()
+        if not r:
+            return
+        try:
+            ttl = max(1, int(cooldown_sec))
+            r.setex(self._redis_key(idx, "cooldown"), ttl, "1")
+        except Exception:
+            pass  # Redis is optional — never block on failure
+
+    def _persist_quota(self, idx: int, s: _KeyState) -> None:
+        """Write remaining quota counters to Redis (fire-and-forget)."""
+        r = self._redis()
+        if not r:
+            return
+        try:
+            pipe = r.pipeline(transaction=False)
+            if s.remaining_tokens is not None:
+                pipe.setex(self._redis_key(idx, "remaining_tokens"), 300, str(s.remaining_tokens))
+            if s.limit_tokens is not None:
+                pipe.setex(self._redis_key(idx, "limit_tokens"), 300, str(s.limit_tokens))
+            pipe.execute()
+        except Exception:
+            pass
+
+    # ── core pool logic ─────────────────────────────────────────────
 
     @property
     def configured(self) -> bool:
@@ -171,7 +258,8 @@ class KeyPool:
         with self._lock:
             if not self.states:
                 return
-            s = self.states[lease.idx if lease is not None else self.idx]
+            i = lease.idx if lease is not None else self.idx
+            s = self.states[i]
             rr = headers.get("x-ratelimit-remaining-requests")
             rt = headers.get("x-ratelimit-remaining-tokens")
             lt = headers.get("x-ratelimit-limit-tokens")
@@ -193,6 +281,7 @@ class KeyPool:
                     pass
             if reset:
                 s.reset_tokens = str(reset)
+            self._persist_quota(i, s)
 
     def mark_rate_limited(
         self, retry_after_sec: float | None = None, *, lease: KeyLease | None = None
@@ -213,6 +302,7 @@ class KeyPool:
                 pool_size=len(self.states),
             )
             self.idx = (i + 1) % len(self.states)
+            self._persist_cooldown(i, cooldown)
 
     def mark_invalid(self, *, lease: KeyLease | None = None) -> None:
         with self._lock:
@@ -220,10 +310,12 @@ class KeyPool:
                 return
             i = lease.idx if lease is not None else self.idx
             s = self.states[i]
-            s.cooldown_until = time.time() + 3600  # 1 hour
+            cooldown = 3600.0  # 1 hour
+            s.cooldown_until = time.time() + cooldown
             s.last_status = 401
             log.warning("keypool.invalid_key", label=self.label, idx=i)
             self.idx = (i + 1) % len(self.states)
+            self._persist_cooldown(i, cooldown)
 
     def status(self) -> dict:
         with self._lock:
@@ -255,3 +347,4 @@ def parse_retry_after(value: str | None) -> float | None:
         return float(value)
     except ValueError:
         return None
+
