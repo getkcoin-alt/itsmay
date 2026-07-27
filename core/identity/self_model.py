@@ -56,6 +56,11 @@ def version_str() -> str:
     return f"{VERSION}+{sha}" if sha else VERSION
 
 
+def repo_root() -> Path:
+    """Absolute path to Scrappy's own source tree (where his code lives)."""
+    return _REPO_ROOT
+
+
 async def gather_inventory(
     *, memory_count: int | None = None, budget: dict[str, Any] | None = None
 ) -> dict[str, Any]:
