@@ -40,6 +40,37 @@ class SelfConnector(Connector):
                 parameters={"type": "object", "properties": {}},
                 executor="server",
             ),
+            ToolSpec(
+                name="propose_change",
+                description=(
+                    "Propose a change to your OWN code. Hand the goal to Claude Code "
+                    "on the Mac, which creates a `scrappy/self-*` branch, implements "
+                    "it, and runs the tests — then I guard the diff against the "
+                    "protected files and report back the branch, changed files, test "
+                    "result, and whether it's safe to apply. This NEVER merges to main "
+                    "and needs a connected `scrappy worker`. Applying is a separate, "
+                    "approval-gated step. Call self.describe first."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": (
+                                "What to change about yourself, as one complete "
+                                "instruction (Claude Code can't see this conversation)."
+                            ),
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Max seconds to wait (60–600, default 480).",
+                        },
+                    },
+                    "required": ["goal"],
+                },
+                executor="server",
+                side_effects=["filesystem.write", "code.execute", "git.branch"],
+            ),
         ],
     )
 
@@ -48,4 +79,16 @@ class SelfConnector(Connector):
             snapshot = await asyncio.to_thread(describe_self)
             log.info("self.describe", branch=snapshot.get("branch"), clean=snapshot.get("clean"))
             return snapshot
+        if action == "propose_change":
+            from core.identity.propose import propose_change
+            from core.worker.bridge import get_worker_bridge
+
+            result = await propose_change(
+                str(args.get("goal", "")),
+                bridge=get_worker_bridge(),
+                session_id=ctx.session_id,
+                timeout=int(args.get("timeout") or 480),
+            )
+            log.info("self.propose_change", branch=result.branch, ok=result.ok)
+            return result.to_dict()
         return f"error: unknown self action {action!r}"
