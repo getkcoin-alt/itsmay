@@ -19,6 +19,7 @@ import httpx
 
 from core.connectors.base import Connector, ConnectorManifest, InvocationContext, ToolSpec
 from core.logging import get_logger
+from core.util.ssrf import SSRFError, guarded_get
 
 log = get_logger(__name__)
 
@@ -171,12 +172,14 @@ async def _ddg_search(query: str, n: int) -> str:
 
 async def _fetch_url(url: str) -> str:
     try:
+        # follow_redirects=False: guarded_get follows them by hand and re-checks
+        # every hop for SSRF, so a public→internal redirect can't slip through.
         async with httpx.AsyncClient(
             headers={"User-Agent": _UA},
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=15,
         ) as client:
-            resp = await client.get(url)
+            resp = await guarded_get(url, client=client)
             resp.raise_for_status()
             ct = resp.headers.get("content-type", "")
             if "html" in ct or "text" in ct:
@@ -184,6 +187,9 @@ async def _fetch_url(url: str) -> str:
             else:
                 text = resp.text
             return text[:_MAX_FETCH_CHARS]
+    except SSRFError as e:
+        log.warning("web.fetch_blocked", url=url, reason=str(e))
+        return f"Refused: {e} (I only fetch public web addresses)."
     except httpx.HTTPStatusError as e:
         return f"HTTP {e.response.status_code} fetching {url}"
     except Exception as e:
