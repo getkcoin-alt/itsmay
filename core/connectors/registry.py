@@ -13,7 +13,13 @@ import json
 import pkgutil
 from dataclasses import dataclass, field
 
-from core.connectors.base import Connector, ConnectorManifest, InvocationContext, ToolSpec
+from core.connectors.base import (
+    Connector,
+    ConnectorManifest,
+    InvocationContext,
+    ToolSpec,
+    compact_description,
+)
 from core.logging import get_logger
 
 log = get_logger(__name__)
@@ -66,22 +72,27 @@ class Registry:
     def manifests(self) -> list[ConnectorManifest]:
         return [c.manifest for c in self.connectors.values()]
 
-    def tools_openai(self, *, executors: set[str] | None = None) -> list[dict]:
+    def tools_openai(
+        self, *, executors: set[str] | None = None, compact: bool = False
+    ) -> list[dict]:
         """Return the OpenAI/Groq-compatible `tools=[...]` payload.
 
         Pass `executors` (e.g. {"server"} or {"client_mac"}) to include only
-        tools that run on those executors. Default: every tool.
+        tools that run on those executors. Default: every tool. `compact=True`
+        trims verbose descriptions for the LLM payload (#16) — used at the model
+        call sites; the console/status views keep the full manifest descriptions.
         """
         out: list[dict] = []
         for rt in self._tools_by_qname.values():
             if executors is not None and rt.spec.executor not in executors:
                 continue
+            desc = compact_description(rt.spec.description) if compact else rt.spec.description
             out.append(
                 {
                     "type": "function",
                     "function": {
                         "name": rt.qualified_name,
-                        "description": rt.spec.description,
+                        "description": desc,
                         "parameters": rt.spec.parameters,
                     },
                 }

@@ -36,12 +36,14 @@ class Orchestrator:
 
     # ── ToolRouter surface ───────────────────────────────────────
     def tools_payload(self) -> list[dict]:
+        # compact=True: descriptions are trimmed for the LLM payload (#16); the
+        # schema is re-sent every tool-loop pass, so this is the dominant token line.
         tools: list[dict] = []
-        tools.extend(self._agents.tools_openai())  # experts
-        tools.extend(self._connectors.tools_openai(executors={"server"}))  # in-process
+        tools.extend(self._agents.tools_openai(compact=True))  # experts
+        tools.extend(self._connectors.tools_openai(executors={"server"}, compact=True))
         if self._voice_mode:
             # Mac control only makes sense when the voice client is listening.
-            tools.extend(self._connectors.tools_openai(executors={"client_mac"}))
+            tools.extend(self._connectors.tools_openai(executors={"client_mac"}, compact=True))
         return tools
 
     def is_client_tool(self, name: str) -> bool:
