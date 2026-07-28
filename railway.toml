@@ -7,7 +7,10 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-healthcheckPath = "/v1/health"
+# Liveness only (no upstream calls) so a rate-limited/cooling-down key can't fail
+# the healthcheck and trigger a restart loop (#19). /v1/health stays the deep
+# readiness check for humans + monitoring.
+healthcheckPath = "/v1/live"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5

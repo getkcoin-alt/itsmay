@@ -28,11 +28,9 @@ from core.memory.episodic import EpisodicStore
 from core.memory.migrate import run_migrations
 from core.memory.semantic import SemanticStore
 from core.memory.sqlite_store import SqliteEpisodicStore, SqliteSemanticStore, ensure_schema
+from core.util.redis_pool import close_redis
 from core.voice.stt_whisper import WhisperSTT
 from core.voice.tts_elevenlabs import ElevenLabsTTS
-
-
-from core.util.redis_pool import close_redis
 
 
 @asynccontextmanager
@@ -82,12 +80,13 @@ def create_app() -> FastAPI:
     )
 
     # Bearer-token guard. The console UI shell (/, /static, /status) stays open
-    # so the page can load and prompt for the key; every /v1 data endpoint
-    # except /v1/health stays protected.
+    # so the page can load and prompt for the key; the health routes (/v1/live,
+    # /v1/health) are open for the platform + monitoring; every /v1 data endpoint
+    # stays protected.
     app.add_middleware(
         BearerAuthMiddleware,
         token=settings.vault_api_key,
-        allow_paths=("/", "/status", "/v1/health", "/favicon.ico"),
+        allow_paths=("/", "/status", "/v1/live", "/v1/health", "/favicon.ico"),
         allow_prefixes=("/static/",),
     )
 
@@ -106,6 +105,14 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def console() -> FileResponse:
         return FileResponse(static_dir / "index.html")
+
+    @app.get("/v1/live", tags=["meta"])
+    async def live() -> dict:
+        # Liveness only: the process is up and the event loop is serving. Makes NO
+        # upstream calls (no LLM / embedder / DB), so a rate-limited or cooling-down
+        # key can't fail the platform healthcheck and trigger a restart loop (#19).
+        # /v1/health stays the DEEP readiness check for humans + monitoring.
+        return {"status": "ok"}
 
     @app.get("/status", tags=["meta"])
     async def status() -> dict:
