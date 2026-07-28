@@ -71,6 +71,45 @@ class SelfConnector(Connector):
                 executor="server",
                 side_effects=["filesystem.write", "code.execute", "git.branch"],
             ),
+            ToolSpec(
+                name="apply_change",
+                description=(
+                    "APPLY a proposal branch to main — this changes your running code. "
+                    "I re-guard the branch's real diff, tag the current main as "
+                    "last-good, merge it (authored as you), and run the tests; if they "
+                    "fail I auto-roll-back. Requires the operator's approval and a "
+                    "connected worker. Only call after self.propose_change reported the "
+                    "branch is safe to apply."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "branch": {
+                            "type": "string",
+                            "description": "The scrappy/self-* branch from self.propose_change.",
+                        },
+                        "notes": {
+                            "type": "string",
+                            "description": "Why you're making this change (for the audit memory).",
+                        },
+                    },
+                    "required": ["branch"],
+                },
+                executor="server",
+                requires_approval=True,
+                side_effects=["git.merge", "code.execute", "self.modify"],
+            ),
+            ToolSpec(
+                name="rollback",
+                description=(
+                    "Reset main to the last-good tag (the state before the most recent "
+                    "apply). Use this if an applied change misbehaves. Restart to run "
+                    "the restored version."
+                ),
+                parameters={"type": "object", "properties": {}},
+                executor="server",
+                side_effects=["git.reset", "self.modify"],
+            ),
         ],
     )
 
@@ -91,4 +130,26 @@ class SelfConnector(Connector):
             )
             log.info("self.propose_change", branch=result.branch, ok=result.ok)
             return result.to_dict()
+        if action == "apply_change":
+            from core.identity.apply import apply_change
+            from core.worker.bridge import get_worker_bridge
+
+            res = await apply_change(
+                str(args.get("branch", "")),
+                notes=str(args.get("notes", "")),
+                bridge=get_worker_bridge(),
+                semantic=ctx.semantic,
+                embedder=ctx.embedder,
+                user_id=ctx.user_uuid,
+                session_id=ctx.session_id,
+            )
+            log.info("self.apply_change", branch=res.branch, applied=res.applied)
+            return res.to_dict()
+        if action == "rollback":
+            from core.identity.apply import rollback
+            from core.worker.bridge import get_worker_bridge
+
+            res = await rollback(bridge=get_worker_bridge(), session_id=ctx.session_id)
+            log.info("self.rollback", ok=res.ok)
+            return res.to_dict()
         return f"error: unknown self action {action!r}"
