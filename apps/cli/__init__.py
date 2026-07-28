@@ -975,6 +975,12 @@ async def _up(run_server=None, run_worker=None) -> None:
         f"{_DIM}(brain + worker){_RESET}"
     )
     print(f"  {_DIM}memory: {mem['backend']} ({mem['location']}){_RESET}")
+    from core.identity.restart import clear_restart, pending_restart
+
+    resumed = pending_restart()
+    if resumed:
+        clear_restart()
+        print(f"  {_GREEN}↻ resumed after a self-update{_RESET} {_DIM}({resumed}){_RESET}")
     if not s.llm_api_key:
         print(
             f"  {_YELLOW}⚠️  no LLM_API_KEY set — add one to ~/.itsmay/config.env "

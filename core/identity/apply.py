@@ -197,6 +197,12 @@ async def apply_change(
 
     if applied:
         await _write_audit(semantic, embedder, user_id, branch=branch, files=files, notes=notes)
+        try:
+            from core.identity.restart import request_restart
+
+            request_restart(reason=f"applied {branch}")  # durable restart signal
+        except Exception as e:
+            log.warning("self.apply.restart_signal_failed", err=str(e))
         summary = (
             f"Applied to main ({len(files)} file(s)), tests green. Restart me to run "
             "as the new version. Use self.rollback if anything's off."
