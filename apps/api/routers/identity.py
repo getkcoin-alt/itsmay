@@ -8,11 +8,13 @@ Behind the same bearer guard as the rest of /v1.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from apps.api.deps import get_embedder, get_episodic, get_semantic
 from core.config import get_settings
 from core.identity.bootstrap import awaken
+from core.identity.secrets import secrets_overview, set_secret
 from core.identity.self_model import gather_inventory
 from core.logging import get_logger
 from core.memory.embedder import Embedder
@@ -66,3 +68,25 @@ async def awaken_endpoint(
         "born_at": result.born_at,
         "inventory": inv,
     }
+
+
+class SecretIn(BaseModel):
+    name: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
+@router.get("/secrets")
+async def list_secrets() -> dict:
+    """Which requestable third-party credentials are set (names only, no values)."""
+    return {"secrets": secrets_overview()}
+
+
+@router.post("/secret")
+async def put_secret(body: SecretIn) -> dict:
+    """Operator-only value entry. The value is written to config and NEVER echoed,
+    logged, or returned — the response confirms the name only."""
+    try:
+        key = set_secret(body.name, body.value)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"name": key, "set": True}

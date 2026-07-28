@@ -110,6 +110,31 @@ class SelfConnector(Connector):
                 executor="server",
                 side_effects=["git.reset", "self.modify"],
             ),
+            ToolSpec(
+                name="request_secret",
+                description=(
+                    "Ask the operator for a third-party API key/credential you need "
+                    "(e.g. an ElevenLabs key for expressive voice). You NEVER receive "
+                    "the value — the operator enters it client-side and it goes "
+                    "straight to config; you only learn that it's set. Explain what "
+                    "you need it for."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The credential key (e.g. elevenlabs_api_key).",
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "What you need it for.",
+                        },
+                    },
+                    "required": ["name", "why"],
+                },
+                executor="server",
+            ),
         ],
     )
 
@@ -152,4 +177,26 @@ class SelfConnector(Connector):
             res = await rollback(bridge=get_worker_bridge(), session_id=ctx.session_id)
             log.info("self.rollback", ok=res.ok)
             return res.to_dict()
+        if action == "request_secret":
+            from core.identity.secrets import ALLOWED_SECRETS, is_allowed, secret_status
+
+            name = str(args.get("name", "")).strip()
+            why = str(args.get("why", "")).strip()
+            if not is_allowed(name):
+                return {
+                    "ok": False,
+                    "error": f"{name!r} isn't a credential I can request.",
+                    "requestable": sorted(ALLOWED_SECRETS),
+                }
+            log.info("self.request_secret", name=name.upper())
+            return {
+                "secret_request": name.upper(),
+                "why": why,
+                "already_set": secret_status(name),
+                "instruction": (
+                    f"To give me this, run `scrappy secret {name}` (or use the "
+                    "console). The value goes straight to my config — it never "
+                    "passes through me, the transcript, or my memory."
+                ),
+            }
         return f"error: unknown self action {action!r}"

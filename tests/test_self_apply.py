@@ -83,8 +83,12 @@ def test_rollback_script_targets_last_good():
 # ── apply_change orchestration ────────────────────────────────────────
 
 
-async def test_apply_happy_path_merges_and_audits(monkeypatch):
+async def test_apply_happy_path_merges_and_audits(monkeypatch, tmp_path):
     monkeypatch.setattr(apply_mod, "self_modify_enabled", lambda: True)
+    from core.identity import restart
+
+    marker = tmp_path / "restart_requested"
+    monkeypatch.setattr(restart, "_marker", lambda: marker)  # isolate the real marker
     sem = RecordingSemantic()
     bridge = FakeBridge(_responder())
     res = await apply_change(
@@ -94,6 +98,8 @@ async def test_apply_happy_path_merges_and_audits(monkeypatch):
 
     assert res.applied is True
     assert res.restart_needed is True
+    # A durable restart signal was raised for the supervisor.
+    assert restart.pending_restart() == f"applied {_BRANCH}"
     assert res.guard["allowed"] is True
     assert res.outcome.startswith("APPLY_OK")
     # Two worker round-trips: preflight diff, then the apply script.

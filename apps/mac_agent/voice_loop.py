@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 
 from apps.mac_agent.chrome import format_tab_list, list_tabs, read_tab_text
 from apps.mac_agent.tab_watcher import TabWatcher
+from core.voice.narration import narrate_approval, narrate_tool, pop_phrase
 
 try:
     from apps.mac_agent.vad import BargeInMonitor, EnergyVADRecorder, VADRecorder
@@ -49,10 +50,8 @@ API_KEY = os.environ.get("VAULT_API_KEY", "")
 SAMPLE_RATE = 16000  # whisper native
 MIN_RECORDING_SEC = 0.3
 SESSION_FILE = Path.home() / ".vault_zeta_session"
-# Phrase break — fires sooner than full sentence so first audio starts ~250ms earlier.
-# We also enforce MIN_CHUNK_CHARS so we don't TTS single words.
-PHRASE_BREAK = re.compile(r"([.!?\n,;—–:])\s+")
-MIN_CHUNK_CHARS = 18
+# Phrase streaming (pop_phrase) + tool/approval narration live in
+# core.voice.narration now — tested, and shared beyond the Mac loop.
 
 # Mac tools that require explicit confirmation before running.
 APPROVAL_REQUIRED = set()
@@ -68,23 +67,6 @@ VAD_AGGRESSIVENESS = int(os.environ.get("VAD_AGGRESSIVENESS", "2"))
 VAD_SILENCE_MS = int(os.environ.get("VAD_SILENCE_MS", "700"))
 BARGE_IN_ENABLED = os.environ.get("BARGE_IN_ENABLED", "false").lower() in ("true", "1", "yes")
 
-_TOOL_ACK: dict[str, str] = {
-    "web": "Searching.",
-    "web.search": "Searching.",
-    "web.fetch": "Fetching that.",
-    "memory": "Checking my memory.",
-    "memory.search": "Checking my memory.",
-    "memory.save": "Got it.",
-    "terminal": "Running that now.",
-    "terminal.spawn": "Spinning that up.",
-    "coder": "Getting Claude on it.",
-    "coder.code": "Getting Claude on it.",
-    "ask_researcher": "Looking into it.",
-    "ask_engineer": "On it.",
-    "ask_analyst": "Analyzing.",
-    "gmail": "Checking your email.",
-    "cal": "Checking your calendar.",
-}
 
 
 def _default_headers() -> dict[str, str]:
@@ -447,22 +429,6 @@ def _maybe_open_watcher_from_status(payload: dict) -> None:
 
 
 # ── phrase splitter ─────────────────────────────────────────────
-def pop_phrase(buf: str) -> tuple[str | None, str]:
-    """Pop the first phrase ending at a natural break (. ! ? , ; : — \\n).
-
-    Skips breaks that fire too early so we don't synthesize 1-2 word fragments;
-    when the chunk is long enough (>= MIN_CHUNK_CHARS) it ships to TTS so the
-    first audio bytes start arriving while the LLM is still emitting tokens.
-    """
-    last_end = 0
-    for m in PHRASE_BREAK.finditer(buf):
-        end = m.end()
-        if end >= MIN_CHUNK_CHARS:
-            return buf[:end].strip(), buf[end:]
-        last_end = end
-    return None, buf
-
-
 class TerminalSpinner:
     def __init__(self, message: str = "") -> None:
         self.message = message
@@ -631,7 +597,7 @@ async def turn(
                 try:
                     payload = json.loads(data)
                     tool = payload.get("tool", "")
-                    ack = _TOOL_ACK.get(tool) or _TOOL_ACK.get(tool.split(".")[0], "")
+                    ack = narrate_tool(tool) or ""
                     if ack:
                         if buf.strip():
                             tts_tasks.append(asyncio.create_task(synth(buf.strip())))
@@ -643,6 +609,18 @@ async def turn(
                     spinner.start()
                 except json.JSONDecodeError:
                     pass
+            elif evt == "approval_required":
+                # Blocked server-side pending the operator's OK — say so out loud
+                # instead of going silent; the client re-sends with approval.
+                try:
+                    approve_name = json.loads(data).get("name", "")
+                except json.JSONDecodeError:
+                    approve_name = ""
+                if buf.strip():
+                    tts_tasks.append(asyncio.create_task(synth(buf.strip())))
+                    buf = ""
+                tts_tasks.append(asyncio.create_task(synth(narrate_approval(approve_name))))
+                print(f"\n  ⚠ needs approval: {approve_name}", flush=True)
             elif evt == "status":
                 try:
                     payload = json.loads(data)

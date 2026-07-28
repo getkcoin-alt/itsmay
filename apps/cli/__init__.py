@@ -13,6 +13,7 @@ Usage:
   scrappy status               server health + worker connected + memory count
   scrappy awaken               speak his first words (writes birth memories on first run)
   scrappy freeze / unfreeze    kill switch for self-modification (Epic 5 guardrail)
+  scrappy secret <name>        give Scrappy a third-party API key (value never shown to him)
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
@@ -434,7 +435,44 @@ def _unfreeze() -> None:
     else:
         print(f"{_DIM}Was not frozen.{_RESET}")
     if not get_settings().self_modify:
-        print(f"{_YELLOW}Note: SELF_MODIFY is off in config — self-modification stays disabled.{_RESET}")
+        print(f"{_YELLOW}Note: SELF_MODIFY is off in config — still disabled.{_RESET}")
+
+
+async def _secret(name: str) -> None:
+    """Give Scrappy a third-party credential. The value is entered here and POSTed
+    straight to config — it is never shown to the model."""
+    import getpass
+
+    try:
+        value = getpass.getpass(f"Value for {name} (hidden, not echoed): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\ncancelled.")
+        return
+    if not value:
+        print("cancelled (empty).")
+        return
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{API_BASE}/v1/identity/secret",
+                headers=headers,
+                json={"name": name, "value": value},
+            )
+            resp.raise_for_status()
+            d = resp.json()
+        print(
+            f"{_GREEN}✓ {d.get('name')} is set.{_RESET} "
+            f"{_DIM}Scrappy was told it's available — he never saw the value.{_RESET}"
+        )
+    except httpx.ConnectError:
+        print(f"{_RED}Cannot connect to {API_BASE} — is the server running?{_RESET}")
+    except httpx.HTTPStatusError as e:
+        print(f"{_RED}HTTP {e.response.status_code}: {e.response.text[:200]}{_RESET}")
+    except Exception as e:
+        print(f"{_RED}Failed: {e}{_RESET}")
 
 
 def _render_agent_event(kind: str, text: str) -> None:
@@ -937,6 +975,12 @@ async def _up(run_server=None, run_worker=None) -> None:
         f"{_DIM}(brain + worker){_RESET}"
     )
     print(f"  {_DIM}memory: {mem['backend']} ({mem['location']}){_RESET}")
+    from core.identity.restart import clear_restart, pending_restart
+
+    resumed = pending_restart()
+    if resumed:
+        clear_restart()
+        print(f"  {_GREEN}↻ resumed after a self-update{_RESET} {_DIM}({resumed}){_RESET}")
     if not s.llm_api_key:
         print(
             f"  {_YELLOW}⚠️  no LLM_API_KEY set — add one to ~/.itsmay/config.env "
@@ -1018,6 +1062,13 @@ def main() -> None:
 
     if args and args[0] == "unfreeze":
         _unfreeze()
+        return
+
+    if args and args[0] == "secret":
+        if len(args) < 2:
+            print(f"{_RED}Usage: scrappy secret <name>  (e.g. elevenlabs_api_key){_RESET}")
+            return
+        asyncio.run(_secret(args[1]))
         return
 
     if args and args[0] == "agents":
