@@ -11,7 +11,7 @@ from __future__ import annotations
 from core.agents.base import SubAgentResult, SubAgentSpec
 from core.agents.experts import ALL_EXPERTS
 from core.agents.runner import run_subagent
-from core.connectors.base import InvocationContext
+from core.connectors.base import InvocationContext, compact_description
 from core.connectors.registry import Registry, get_registry
 from core.logging import get_logger
 
@@ -41,19 +41,24 @@ class AgentRegistry:
     def has(self, tool_name: str) -> bool:
         return tool_name in self._available
 
-    def tools_openai(self) -> list[dict]:
-        """Delegation tools Scrappy can call — one `ask_<expert>` per expert."""
+    def tools_openai(self, *, compact: bool = False) -> list[dict]:
+        """Delegation tools Scrappy can call — one `ask_<expert>` per expert.
+
+        `compact=True` trims the description for the LLM payload (#16)."""
         out: list[dict] = []
         for spec in self._available.values():
+            description = (
+                f"Delegate to the {spec.title}, expert in: {spec.expertise} "
+                "Hand off a clear, self-contained task; you get back a "
+                "synthesized answer to relay or act on."
+            )
             out.append(
                 {
                     "type": "function",
                     "function": {
                         "name": spec.tool_name,
                         "description": (
-                            f"Delegate to the {spec.title}, expert in: {spec.expertise} "
-                            "Hand off a clear, self-contained task; you get back a "
-                            "synthesized answer to relay or act on."
+                            compact_description(description) if compact else description
                         ),
                         "parameters": {
                             "type": "object",

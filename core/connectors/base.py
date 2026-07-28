@@ -86,3 +86,22 @@ class Connector(ABC):
 
     async def health(self) -> dict:
         return {"name": self.manifest.name, "ok": True}
+
+
+def compact_description(desc: str, *, cap: int = 200) -> str:
+    """Trim a verbose tool description for the LLM `tools=[...]` payload.
+
+    The full schema is re-sent on every tool-loop pass (the dominant per-turn
+    token cost, #16). Descriptions carry intent, so we keep whole sentences up to
+    ~`cap` chars rather than a hard cut. Safe to trim: `requires_approval` and
+    side-effects are enforced structurally at `Registry.invoke`, never from this
+    text — so a shorter description can't weaken the approval gate.
+    """
+    desc = " ".join(desc.split())  # collapse whitespace
+    if len(desc) <= cap:
+        return desc
+    head = desc[:cap]
+    cut = max(head.rfind(". "), head.rfind("? "), head.rfind("! "))
+    if cut >= 60:
+        return head[: cut + 1]
+    return head.rstrip() + "…"

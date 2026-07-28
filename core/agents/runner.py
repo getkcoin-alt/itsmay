@@ -12,6 +12,8 @@ tool result Scrappy reads.
 
 from __future__ import annotations
 
+import threading
+
 from core.agents.base import SubAgentResult, SubAgentSpec
 from core.brain.agent_loop import ClientToolCall, Done, Token, ToolResult, run_tool_loop
 from core.brain.llm import LLMClient, Message
@@ -26,14 +28,19 @@ log = get_logger(__name__)
 # must not open (and leak) a fresh httpx client on every delegation; these share
 # the process key pool, exactly like the default app client.
 _model_clients: dict[str, LLMClient] = {}
+_model_clients_lock = threading.Lock()
 
 
 def _client_for_model(model: str) -> LLMClient:
-    client = _model_clients.get(model)
-    if client is None:
-        client = LLMClient(model=model)
-        _model_clients[model] = client
-    return client
+    # Lock the check-then-set so concurrent expert fan-out can't build two clients
+    # for one model and leak the loser's httpx pool (#15). Uncontended in the
+    # single event loop; the lock also makes it correct under threaded callers.
+    with _model_clients_lock:
+        client = _model_clients.get(model)
+        if client is None:
+            client = LLMClient(model=model)
+            _model_clients[model] = client
+        return client
 
 
 def _expert_llm(spec: SubAgentSpec, default: LLMClient) -> LLMClient:
@@ -64,7 +71,7 @@ class _SubAgentToolRouter:
     def tools_payload(self) -> list[dict]:
         return [
             t
-            for t in self._registry.tools_openai(executors={"server"})
+            for t in self._registry.tools_openai(executors={"server"}, compact=True)
             if t["function"]["name"].split(".", 1)[0] in self._allowed
         ]
 
