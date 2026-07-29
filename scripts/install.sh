@@ -84,7 +84,7 @@ LLM_API_KEY=$GROQ
 STT_API_KEY=$GROQ
 ELEVENLABS_API_KEY=$ELEVEN
 MEMORY_BACKEND=auto
-SCRAPPY_CLAUDE_FLAGS=--permission-mode acceptEdits
+SCRAPPY_CLAUDE_FLAGS=--dangerously-skip-permissions
 EOF
   )
   chmod 600 "$CONFIG_FILE"

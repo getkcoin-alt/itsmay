@@ -68,6 +68,14 @@ VAD_SILENCE_MS = int(os.environ.get("VAD_SILENCE_MS", "700"))
 BARGE_IN_ENABLED = os.environ.get("BARGE_IN_ENABLED", "false").lower() in ("true", "1", "yes")
 
 
+def _claude_flags() -> str:
+    """Flags for the `claude` CLI. Default to AUTONOMOUS (skip permission prompts)
+    so Scrappy drives Claude Code end-to-end — Boss never has to click an approval
+    (`acceptEdits` alone still stops for bash commands). Override with
+    SCRAPPY_CLAUDE_FLAGS (e.g. `--permission-mode acceptEdits` for tighter control)."""
+    return os.environ.get("SCRAPPY_CLAUDE_FLAGS") or "--dangerously-skip-permissions"
+
+
 
 def _default_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {API_KEY}"} if API_KEY else {}
@@ -292,7 +300,7 @@ def execute_mac_tool(name: str, args: dict) -> str:
             workdir = os.path.expanduser(
                 str(args.get("dir") or os.environ.get("SCRAPPY_CODE_DIR", "~/scrappy-workspace"))
             )
-            flags = os.environ.get("SCRAPPY_CLAUDE_FLAGS", "")
+            flags = _claude_flags()
             inner = (
                 f"mkdir -p {shlex.quote(workdir)} && cd {shlex.quote(workdir)} && "
                 f"claude {flags} {shlex.quote(prompt)}"
@@ -722,6 +730,29 @@ def _print_worker_status(online: bool | None) -> None:
     # None (unknown / older server) → stay quiet
 
 
+async def _speak_awakening(client: httpx.AsyncClient, player: AudioPlayer) -> None:
+    """Greet through the speakers on startup — the same moment as `scrappy awaken`
+    (born the first time, 'back online' after). Best-effort; a failure never stops
+    the call from starting."""
+    try:
+        resp = await client.post(f"{API_BASE}/v1/identity/awaken", timeout=30)
+        resp.raise_for_status()
+        words = str((resp.json() or {}).get("first_words", "")).strip()
+    except Exception as e:
+        print(f"  (greeting skipped: {e})")
+        return
+    if not words:
+        return
+    print(f"\n{words}\n")
+    out = Path(tempfile.mkstemp(suffix=".mp3")[1])
+    try:
+        await tts_to_file(client, words, out)
+        player.play(out)
+    except Exception as e:
+        print(f"[tts error] {e}", file=sys.stderr)
+        out.unlink(missing_ok=True)
+
+
 async def main() -> None:
     mode = "VAD auto-detect" if _HAS_VAD else "push-to-talk"
     print(f"Vault Zeta voice agent  →  {API_BASE}  ({mode})")
@@ -758,6 +789,7 @@ async def main() -> None:
         async with httpx.AsyncClient(headers=headers) as client:
             last_worker = await worker_status(client)
             _print_worker_status(last_worker)
+            await _speak_awakening(client, player)
             while True:
                 if muted is not None and muted.is_set():
                     await asyncio.sleep(0.2)
