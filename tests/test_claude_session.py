@@ -70,3 +70,14 @@ def test_reopens_when_window_was_closed(session_reset):
     assert "started a Claude Code session" in out
     assert state["opened"] == 1 and state["sent"] == 0
     assert vl._claude_session["window_id"] == "55555"
+
+
+def test_claude_flags_default_is_autonomous(monkeypatch):
+    # Unset → autonomous, so Scrappy-driven Claude Code doesn't stop for approvals.
+    monkeypatch.delenv("SCRAPPY_CLAUDE_FLAGS", raising=False)
+    assert vl._claude_flags() == "--dangerously-skip-permissions"
+
+
+def test_claude_flags_respects_override(monkeypatch):
+    monkeypatch.setenv("SCRAPPY_CLAUDE_FLAGS", "--permission-mode acceptEdits")
+    assert vl._claude_flags() == "--permission-mode acceptEdits"

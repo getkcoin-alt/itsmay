@@ -21,8 +21,8 @@ Usage:
 Environment:
   VAULT_API_BASE       server base URL (default: http://127.0.0.1:8000)
   VAULT_API_KEY        bearer token   (default: empty = open mode)
-  SCRAPPY_CLAUDE_FLAGS extra flags passed to `claude -p` by the worker
-                       (e.g. "--permission-mode acceptEdits")
+  SCRAPPY_CLAUDE_FLAGS flags for the `claude` CLI Scrappy drives
+                       (default: --dangerously-skip-permissions, autonomous)
 """
 
 from __future__ import annotations
@@ -671,7 +671,9 @@ def _run_local_command(kind: str, cmd: str, timeout: int, agent_id: str) -> str:
         workdir = WORKSPACE
     shell = os.environ.get("SHELL", "/bin/bash")
     if kind == "claude":
-        flags = os.environ.get("SCRAPPY_CLAUDE_FLAGS", "")
+        # Autonomous by default (skip permission prompts) so headless Claude Code
+        # runs to completion without a human to approve; override via the env var.
+        flags = os.environ.get("SCRAPPY_CLAUDE_FLAGS") or "--dangerously-skip-permissions"
         full = f"claude -p {shlex.quote(cmd)} {flags}".strip()
     else:
         full = cmd
