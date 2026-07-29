@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.connectors.base import Connector, ConnectorManifest, InvocationContext, ToolSpec
+from core.connectors.coder.builder import run_build
 from core.logging import get_logger
 from core.worker.bridge import get_worker_bridge
 
@@ -64,10 +65,46 @@ class CoderConnector(Connector):
                 executor="server",
                 side_effects=["filesystem.write", "code.execute"],
             ),
+            ToolSpec(
+                name="build",
+                description=(
+                    "BUILD a complete, working deliverable end-to-end with Claude Code, "
+                    "then report back and AUTO-OPEN the result. Give the GOAL in plain "
+                    "words (e.g. 'a calculator web app'). Claude Code runs autonomously "
+                    "to COMPLETION on the Mac worker — I wait for it, tell you in one "
+                    "line what got built, and open it for you. Use this when Karnveer "
+                    "wants the FINISHED thing (not to watch it code). Can take a few "
+                    "minutes. Requires a connected `scrappy worker`."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": (
+                                "What to build, in plain words — the finished deliverable "
+                                "you want (e.g. 'a working Pomodoro timer web app')."
+                            ),
+                        },
+                    },
+                    "required": ["goal"],
+                },
+                executor="server",
+                side_effects=["filesystem.write", "code.execute", "app.open"],
+            ),
         ],
     )
 
     async def invoke(self, action: str, args: dict, ctx: InvocationContext) -> Any:
+        if action == "build":
+            result = await run_build(
+                str(args.get("goal", "")),
+                bridge=get_worker_bridge(),
+                session_id=ctx.session_id,
+            )
+            log.info("coder.build", ok=result.get("ok"), opened=result.get("opened"))
+            return result
+
         if action != "code":
             return f"error: unknown coder action {action!r}"
 
