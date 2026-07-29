@@ -37,6 +37,9 @@ class WorkerCommand:
     timeout: int
     task: str = ""
     thought: str = ""
+    # Ask the worker to run this (claude) command in streaming mode and POST live
+    # milestones back — set for coder.build so a long build narrates itself.
+    stream_progress: bool = False
     future: asyncio.Future | None = field(default=None)
     # Server-side live-progress sink: called with each milestone the worker
     # streams back for THIS command (via POST /v1/worker/progress) while it's
@@ -53,6 +56,7 @@ class WorkerCommand:
             "timeout": self.timeout,
             "task": self.task,
             "thought": self.thought,
+            "stream_progress": self.stream_progress,
         }
 
 
@@ -88,12 +92,15 @@ class WorkerBridge:
         timeout: int,
         task: str = "",
         thought: str = "",
+        stream_progress: bool = False,
         on_progress: Callable[[str], None] | None = None,
     ) -> str:
         """Queue a command for the worker and await its output string.
 
         `on_progress`, if given, is called with each live milestone the worker
-        streams back for this command while it runs (see `progress`)."""
+        streams back for this command while it runs (see `progress`);
+        `stream_progress` tells the worker to run in streaming mode so those
+        milestones actually flow."""
         loop = asyncio.get_running_loop()
         command = WorkerCommand(
             id=uuid.uuid4().hex[:12],
@@ -103,6 +110,7 @@ class WorkerBridge:
             timeout=timeout,
             task=task,
             thought=thought,
+            stream_progress=stream_progress,
             future=loop.create_future(),
             on_progress=on_progress,
         )

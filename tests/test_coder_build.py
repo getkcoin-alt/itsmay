@@ -18,17 +18,34 @@ from core.connectors.registry import get_registry
 
 
 class FakeBridge:
-    def __init__(self, build_output: str = "", online: bool = True) -> None:
+    def __init__(
+        self,
+        build_output: str = "",
+        online: bool = True,
+        milestones: list[str] | None = None,
+    ) -> None:
         self._build = build_output
         self._online = online
+        self._milestones = milestones or []
         self.calls: list[dict] = []
 
     def worker_online(self) -> bool:
         return self._online
 
-    async def submit(self, *, agent_id, kind, cmd, timeout, task=""):  # noqa: ASYNC109
-        self.calls.append({"kind": kind, "cmd": cmd, "timeout": timeout})
-        return self._build if kind == "claude" else ""
+    async def submit(
+        self, *, agent_id, kind, cmd, timeout, task="",  # noqa: ASYNC109 - mirrors bridge API
+        stream_progress=False, on_progress=None,
+    ):
+        self.calls.append(
+            {"kind": kind, "cmd": cmd, "timeout": timeout, "stream_progress": stream_progress}
+        )
+        if kind == "claude":
+            # Model the streaming worker POSTing live milestones as it builds.
+            if on_progress:
+                for m in self._milestones:
+                    on_progress(m)
+            return self._build
+        return ""
 
 
 def _report(ok=True, summary="built a calculator", open_="index.html") -> str:
@@ -85,6 +102,29 @@ async def test_build_happy_path_reports_and_opens():
     # Two worker round-trips: the build (claude), then the open (bash).
     assert [c["kind"] for c in bridge.calls] == ["claude", "bash"]
     assert bridge.calls[1]["cmd"] == "open index.html"
+
+
+async def test_build_streams_progress_then_opens():
+    seen: list[str] = []
+    bridge = FakeBridge(
+        _transcript(_report(open_="index.html")),
+        milestones=["Writing index.html", "Running: npm install"],
+    )
+    res = await run_build("a calc", bridge=bridge, session_id="s", on_progress=seen.append)
+
+    assert res["ok"] is True and res["opened"] is True
+    # The worker's streamed play-by-play, then our own "Opening …", in order.
+    assert seen == ["Writing index.html", "Running: npm install", "Opening index.html"]
+    # The build round-trip opted into streaming; the open call did not.
+    build_call = next(c for c in bridge.calls if c["kind"] == "claude")
+    assert build_call["stream_progress"] is True
+
+
+async def test_build_without_sink_still_builds():
+    # No on_progress wired (e.g. text CLI) — milestones are simply dropped.
+    bridge = FakeBridge(_transcript(_report(open_="index.html")), milestones=["x", "y"])
+    res = await run_build("a calc", bridge=bridge)
+    assert res["ok"] is True and res["opened"] is True
 
 
 async def test_build_ok_but_nothing_to_open():

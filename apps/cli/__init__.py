@@ -34,6 +34,9 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -662,19 +665,127 @@ async def _watch_agent(agent_id: str) -> None:
 WORKSPACE = Path.home() / "scrappy-workspace"
 
 
-def _run_local_command(kind: str, cmd: str, timeout: int, agent_id: str) -> str:
-    """Execute one agent command locally and return combined stdout+stderr."""
-    workdir = WORKSPACE / agent_id
+def _claude_flags() -> str:
+    """Flags for the `claude` CLI. Autonomous by default (skip permission prompts)
+    so headless Claude Code runs to completion with no human to approve."""
+    return os.environ.get("SCRAPPY_CLAUDE_FLAGS") or "--dangerously-skip-permissions"
+
+
+def _worker_workdir(agent_id: str) -> Path:
+    """A working directory for an agent's commands that we KNOW is writable.
+
+    The default is ~/scrappy-workspace/<agent_id>, but if that can't be created
+    or written to — bad perms, a read-only mount, ownership left behind by an
+    earlier run as root — fall back to a fresh temp dir. A Claude Code build
+    should produce the result, never die on a "write permission issue in the
+    workspace."
+    """
+    candidate = WORKSPACE / (agent_id or "misc")
     try:
-        workdir.mkdir(parents=True, exist_ok=True)
+        candidate.mkdir(parents=True, exist_ok=True)
+        probe = candidate / ".scrappy_write_test"
+        probe.write_text("ok")
+        probe.unlink()
+        return candidate
     except Exception:
-        workdir = WORKSPACE
+        return Path(tempfile.mkdtemp(prefix="scrappy-build-"))
+
+
+def _run_claude_streaming(
+    prompt: str,
+    workdir: Path,
+    shell: str,
+    timeout: int,
+    progress_cb: Callable[[str], None] | None,
+) -> str:
+    """Run headless Claude Code in stream-json mode, calling `progress_cb` with a
+    live milestone for each step as it happens, and return the final assistant
+    text (which carries the SCRAPPY_RESULT line coder.build parses).
+
+    `--output-format stream-json --verbose` makes `claude -p` emit one JSON event
+    per line as it works, instead of printing nothing until the very end.
+    """
+    from core.connectors.coder.stream import parse_stream_line
+
+    full = (
+        f"claude -p {shlex.quote(prompt)} "
+        f"--output-format stream-json --verbose {_claude_flags()}"
+    ).strip()
+    try:
+        proc = subprocess.Popen(
+            [shell, "-lc", full],
+            cwd=str(workdir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            bufsize=1,
+        )
+    except FileNotFoundError:
+        return f"[worker: shell {shell!r} not found]"
+    except Exception as e:
+        return f"[worker error: {type(e).__name__}: {e}]"
+
+    # A watchdog gives us a hard timeout even if Claude hangs mid-stream with no
+    # newline (a plain readline loop would block forever otherwise).
+    timed_out = threading.Event()
+
+    def _kill() -> None:
+        timed_out.set()
+        with contextlib.suppress(Exception):
+            proc.kill()
+
+    timer = threading.Timer(max(1, timeout), _kill)
+    timer.start()
+    final_text: str | None = None
+    raw_tail: list[str] = []  # fallback if no terminal result event arrives
+    try:
+        for line in proc.stdout or ():
+            raw_tail.append(line[:2000])
+            if len(raw_tail) > 200:
+                raw_tail.pop(0)
+            parsed = parse_stream_line(line)
+            for m in parsed.milestones:
+                if progress_cb:
+                    progress_cb(m)
+            if parsed.final_text is not None:
+                final_text = parsed.final_text
+        proc.wait()
+    except Exception as e:
+        return f"[worker error: {type(e).__name__}: {e}]"
+    finally:
+        timer.cancel()
+
+    if timed_out.is_set():
+        return f"[timed out after {timeout}s]"
+    if final_text is not None:
+        return final_text.strip() or "(no output)"
+    # No result event (older CLI, an error, or non-stream output): return the raw
+    # TAIL so a SCRAPPY_RESULT printed at the end still survives for parsing.
+    raw = "".join(raw_tail).strip()
+    return (raw[-4096:] if raw else "") or "(no output)"
+
+
+def _run_local_command(
+    kind: str,
+    cmd: str,
+    timeout: int,
+    agent_id: str,
+    *,
+    stream: bool = False,
+    progress_cb: Callable[[str], None] | None = None,
+) -> str:
+    """Execute one agent command locally and return combined stdout+stderr.
+
+    `stream=True` (set for coder.build) runs Claude in streaming mode so its
+    progress is narrated live; everything else keeps the simple blocking path.
+    """
+    workdir = _worker_workdir(agent_id)
     shell = os.environ.get("SHELL", "/bin/bash")
+    if kind == "claude" and stream:
+        return _run_claude_streaming(cmd, workdir, shell, timeout, progress_cb)
     if kind == "claude":
-        # Autonomous by default (skip permission prompts) so headless Claude Code
-        # runs to completion without a human to approve; override via the env var.
-        flags = os.environ.get("SCRAPPY_CLAUDE_FLAGS") or "--dangerously-skip-permissions"
-        full = f"claude -p {shlex.quote(cmd)} {flags}".strip()
+        full = f"claude -p {shlex.quote(cmd)} {_claude_flags()}".strip()
     else:
         full = cmd
     try:
@@ -773,12 +884,29 @@ async def _serve(client: httpx.AsyncClient, headers: dict, current: dict) -> Non
                 continue
 
             _display_command(cmd, current)
+            stream = bool(cmd.get("stream_progress"))
+            cmd_id = cmd.get("command_id")
+
+            def _post_progress(chunk: str, _id=cmd_id) -> None:
+                # Runs in the worker thread; a synchronous POST is fine here.
+                # Best-effort — a dropped milestone never affects the result.
+                print(f"  {_DIM}… {chunk[:160]}{_RESET}", flush=True)
+                with contextlib.suppress(Exception):
+                    httpx.post(
+                        f"{API_BASE}/v1/worker/progress",
+                        json={"command_id": _id, "chunk": chunk},
+                        headers=headers,
+                        timeout=5,
+                    )
+
             output = await asyncio.to_thread(
                 _run_local_command,
                 cmd.get("kind", "bash"),
                 cmd.get("cmd", ""),
                 int(cmd.get("timeout", 60) or 60),
                 cmd.get("agent_id", "misc"),
+                stream=stream,
+                progress_cb=_post_progress if stream else None,
             )
             _display_output(output)
             try:

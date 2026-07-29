@@ -121,8 +121,10 @@ async def test_payload_shape():
         cmd = await bridge.next_command(wait=2.0)
         payload = cmd.to_payload()
         assert set(payload) == {
-            "command_id", "agent_id", "kind", "cmd", "timeout", "task", "thought"
+            "command_id", "agent_id", "kind", "cmd", "timeout", "task", "thought",
+            "stream_progress",
         }
+        assert payload["stream_progress"] is False  # default off; builds opt in
         bridge.complete(cmd.id, "ok")
 
     task = asyncio.create_task(fake_worker())

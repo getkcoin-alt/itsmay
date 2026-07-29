@@ -50,6 +50,7 @@ TOOL_ACK: dict[str, str] = {
     "terminal.spawn": "Spinning that up.",
     "coder": "Getting Claude on it.",
     "coder.code": "Getting Claude on it.",
+    "coder.build": "On it — building that now.",
     "gmail": "Checking your email.",
     "cal": "Checking your calendar.",
     "browser": "Opening the browser.",
@@ -104,3 +105,20 @@ def narrate_approval(name: str) -> str:
     if friendly is None:
         friendly = _FRIENDLY_APPROVAL_NS.get(name.split(".")[0], f"run {name}")
     return f"I need your OK to {friendly}. Say the word."
+
+
+# ── live progress narration (streaming-progress v2) ───────────────────
+
+_PROGRESS_MAX = 200
+
+
+def narrate_progress(text: str) -> str | None:
+    """A live milestone from a long-running tool (a Claude Code build narrating
+    "Writing index.html", "Running: npm install", or its own thinking) → a
+    speakable line. The worker already distilled it to human text, so this is
+    mostly tidy-and-pass-through; returns None for empty/noise so we stay quiet.
+    """
+    text = " ".join((text or "").split())
+    if len(text) < 2:
+        return None
+    return text if len(text) <= _PROGRESS_MAX else text[:_PROGRESS_MAX].rstrip() + "…"

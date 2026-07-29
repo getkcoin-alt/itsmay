@@ -7,8 +7,10 @@ result — so "build me a calculator" becomes a working, opened calculator with 
 one-line report, no babysitting.
 
 Blocking by design (it extends the proven `coder.code` request/response over the
-worker bridge): waiting for the worker's result IS the monitoring. Live progress
-during the build is a follow-up (needs streaming from the worker).
+worker bridge): waiting for the worker's result IS the monitoring. It also runs
+in streaming mode — the worker POSTs live milestones ("Writing index.html",
+"Running: npm install") back over the progress channel, so instead of a silent
+multi-minute block, Boss hears Claude Code think and work in real time.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from collections.abc import Callable
 from typing import Protocol
 
 from core.logging import get_logger
@@ -39,6 +42,8 @@ class _Bridge(Protocol):
         cmd: str,
         timeout: int,  # noqa: ASYNC109 - mirrors WorkerBridge.submit's queue API
         task: str = ...,
+        stream_progress: bool = ...,
+        on_progress: Callable[[str], None] | None = ...,
     ) -> str: ...
 
 
@@ -76,9 +81,27 @@ def _safe_target(target: str) -> bool:
     return bool(target) and len(target) < 300 and not (_UNSAFE & set(target))
 
 
-async def run_build(goal: str, *, bridge: _Bridge, session_id: str | None = None) -> dict:
+async def run_build(
+    goal: str,
+    *,
+    bridge: _Bridge,
+    session_id: str | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> dict:
     """Build `goal` with Claude Code to completion, then open the result. Returns
-    `{ok, summary, opened, open_target}` (or `needs_worker` / `raw` on failure)."""
+    `{ok, summary, opened, open_target}` (or `needs_worker` / `raw` on failure).
+
+    `on_progress`, when given, receives live milestones — both the worker's
+    streamed play-by-play and our own ("Opening it now") — for Scrappy to speak.
+    """
+
+    def _emit(msg: str) -> None:
+        if on_progress:
+            try:
+                on_progress(msg)
+            except Exception as e:  # narration must never break the build
+                log.warning("coder.build.emit_failed", err=str(e))
+
     goal = (goal or "").strip()
     if not goal:
         return {"ok": False, "summary": "error: empty goal"}
@@ -100,6 +123,8 @@ async def run_build(goal: str, *, bridge: _Bridge, session_id: str | None = None
         cmd=build_prompt(goal),
         timeout=BUILD_TIMEOUT,
         task=f"(build) {goal[:70]}",
+        stream_progress=True,
+        on_progress=on_progress,
     )
 
     report = parse_result(out)
@@ -116,6 +141,7 @@ async def run_build(goal: str, *, bridge: _Bridge, session_id: str | None = None
 
     opened = False
     if ok and _safe_target(target):
+        _emit(f"Opening {target}")
         try:
             # Runs in the same worker workspace dir the build wrote to.
             await bridge.submit(
