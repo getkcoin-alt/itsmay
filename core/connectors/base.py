@@ -70,6 +70,11 @@ class InvocationContext:
     registry: Any | None = None  # core.connectors.registry.Registry
     embedder: Any | None = None  # core.memory.embedder.Embedder
     semantic: Any | None = None  # core.memory.semantic.SemanticStore
+    # Live progress sink. The tool loop sets this to a sync `callable(str) -> None`
+    # for the duration of a server tool; a slow tool calls it to narrate progress
+    # (surfaced as ToolProgress → SSE → voice). None when no loop is draining it,
+    # so tools must guard: `if ctx.emit_progress: ctx.emit_progress("…")`.
+    emit_progress: Any | None = None  # callable(str) -> None, or None
 
 
 class Connector(ABC):

@@ -24,6 +24,7 @@ the final text, etc.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
@@ -74,6 +75,20 @@ class ToolStart:
 
 
 @dataclass(slots=True)
+class ToolProgress:
+    """A live progress line from a still-running server tool.
+
+    Emitted zero-or-more times *between* ToolStart and ToolResult while a slow
+    tool (e.g. a multi-minute Claude Code build) narrates what it's doing, so the
+    turn isn't a silent block. Purely for the consumer to surface (SSE / voice);
+    never fed back to the model.
+    """
+
+    name: str
+    text: str
+
+
+@dataclass(slots=True)
 class ApprovalRequired:
     """A server tool was BLOCKED pending explicit user approval (not executed).
 
@@ -96,7 +111,9 @@ class Done:
     stop_reason: str = "stop"  # "stop" | "max_iters"
 
 
-LoopEvent = Token | ClientToolCall | ToolStart | ApprovalRequired | ToolResult | Done
+LoopEvent = (
+    Token | ClientToolCall | ToolStart | ToolProgress | ApprovalRequired | ToolResult | Done
+)
 
 
 class ApprovalRequiredError(Exception):
@@ -201,8 +218,27 @@ async def run_tool_loop(
         for c in server_calls:
             name = c.get("name") or ""
             yield ToolStart(id=c.get("id") or "", name=name)
+            # Give the tool a live progress channel. It runs as a task while we
+            # drain anything it puts on the queue into ToolProgress events, so a
+            # slow tool (a multi-minute Claude Code build) narrates instead of
+            # blocking silently. `emit_progress` is a plain sync callable — tools
+            # call it from this same loop, and it's cleared the moment the tool
+            # returns so a stray late call can't leak into the next tool.
+            progress_q: asyncio.Queue[str] = asyncio.Queue()
+            ctx.emit_progress = progress_q.put_nowait
+            exec_task = asyncio.create_task(
+                router.execute_server(name, c.get("arguments") or {}, ctx)
+            )
             try:
-                result = await router.execute_server(name, c.get("arguments") or {}, ctx)
+                while not exec_task.done():
+                    try:
+                        msg = await asyncio.wait_for(progress_q.get(), timeout=0.3)
+                    except TimeoutError:
+                        continue
+                    yield ToolProgress(name=name, text=msg)
+                while not progress_q.empty():  # flush progress buffered at the finish
+                    yield ToolProgress(name=name, text=progress_q.get_nowait())
+                result = await exec_task
             except ApprovalRequiredError as e:
                 # Blocked, not failed: surface the request to the user and tell
                 # the model so it can ask for confirmation in its reply.
@@ -215,6 +251,8 @@ async def run_tool_loop(
             except Exception as e:  # never let a tool blow up the whole turn
                 log.exception("agent_loop.tool_failed", tool=name)
                 result = f"error: {type(e).__name__}: {e}"
+            finally:
+                ctx.emit_progress = None
             messages.append(tool_result_message(c.get("id") or "", name, result))
             yield ToolResult(name=name, summary=result[:200])
 

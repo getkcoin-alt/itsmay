@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from core.logging import get_logger
@@ -37,6 +38,11 @@ class WorkerCommand:
     task: str = ""
     thought: str = ""
     future: asyncio.Future | None = field(default=None)
+    # Server-side live-progress sink: called with each milestone the worker
+    # streams back for THIS command (via POST /v1/worker/progress) while it's
+    # still running. Deliberately NOT part of to_payload — it never leaves the
+    # server; the worker only knows the command_id to attach progress to.
+    on_progress: Callable[[str], None] | None = field(default=None)
 
     def to_payload(self) -> dict:
         return {
@@ -82,8 +88,12 @@ class WorkerBridge:
         timeout: int,
         task: str = "",
         thought: str = "",
+        on_progress: Callable[[str], None] | None = None,
     ) -> str:
-        """Queue a command for the worker and await its output string."""
+        """Queue a command for the worker and await its output string.
+
+        `on_progress`, if given, is called with each live milestone the worker
+        streams back for this command while it runs (see `progress`)."""
         loop = asyncio.get_running_loop()
         command = WorkerCommand(
             id=uuid.uuid4().hex[:12],
@@ -94,6 +104,7 @@ class WorkerBridge:
             task=task,
             thought=thought,
             future=loop.create_future(),
+            on_progress=on_progress,
         )
         self._pending[command.id] = command
         await self._queue.put(command)
@@ -123,6 +134,25 @@ class WorkerBridge:
         if command is None or command.future is None or command.future.done():
             return False
         command.future.set_result(output)
+        return True
+
+    def progress(self, command_id: str, chunk: str) -> bool:
+        """Route a live progress milestone from the worker to the command's sink.
+
+        Best-effort narration only — never affects the command's result. Returns
+        False when the command is unknown, already finished, or has no sink (most
+        commands don't); a raising sink is swallowed so a bad narrator can't break
+        the in-flight command."""
+        command = self._pending.get(command_id)
+        if command is None or command.on_progress is None:
+            return False
+        if command.future is not None and command.future.done():
+            return False
+        try:
+            command.on_progress(chunk)
+        except Exception as e:
+            log.warning("worker.progress_sink_failed", command_id=command_id, err=str(e))
+            return False
         return True
 
 

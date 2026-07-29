@@ -17,6 +17,7 @@ from core.brain.agent_loop import (
     ClientToolCall,
     Done,
     Token,
+    ToolProgress,
     ToolResult,
     ToolStart,
     run_tool_loop,
@@ -221,6 +222,13 @@ async def chat(
                     yield {
                         "event": "tool_start",
                         "data": json.dumps({"id": ev.id, "tool": ev.name}),
+                    }
+                elif isinstance(ev, ToolProgress):
+                    # A slow tool narrating mid-run (e.g. a Claude Code build).
+                    # Surfaced live so the voice client can speak the play-by-play.
+                    yield {
+                        "event": "tool_progress",
+                        "data": json.dumps({"tool": ev.name, "text": ev.text}),
                     }
                 elif isinstance(ev, ApprovalRequired):
                     # Blocked server-side. The client shows a confirm prompt and

@@ -56,6 +56,64 @@ def test_complete_unknown_command_returns_false():
     assert bridge.complete("does-not-exist", "x") is False
 
 
+async def test_bridge_progress_routes_live_milestones_to_sink():
+    bridge = WorkerBridge()
+    seen: list[str] = []
+
+    async def fake_worker():
+        cmd = await bridge.next_command(wait=2.0)
+        assert cmd is not None
+        # Live milestones stream while the command runs...
+        assert bridge.progress(cmd.id, "writing index.html") is True
+        assert bridge.progress(cmd.id, "running npm install") is True
+        bridge.complete(cmd.id, "done")
+        # ...but never after it has resolved.
+        assert bridge.progress(cmd.id, "too late") is False
+
+    task = asyncio.create_task(fake_worker())
+    out = await bridge.submit(
+        agent_id="a1", kind="claude", cmd="build", timeout=2, on_progress=seen.append
+    )
+    assert out == "done"
+    await task
+    assert seen == ["writing index.html", "running npm install"]
+
+
+async def test_bridge_progress_unknown_or_sinkless_is_false():
+    bridge = WorkerBridge()
+    assert bridge.progress("does-not-exist", "x") is False  # unknown command
+
+    async def fake_worker():
+        cmd = await bridge.next_command(wait=2.0)
+        # A command submitted without on_progress silently ignores milestones.
+        assert bridge.progress(cmd.id, "ignored") is False
+        bridge.complete(cmd.id, "ok")
+
+    task = asyncio.create_task(fake_worker())
+    await bridge.submit(agent_id="a", kind="bash", cmd="echo hi", timeout=2)
+    await task
+
+
+async def test_bridge_progress_sink_error_is_swallowed():
+    bridge = WorkerBridge()
+
+    def boom(_: str) -> None:
+        raise RuntimeError("bad narrator")
+
+    async def fake_worker():
+        cmd = await bridge.next_command(wait=2.0)
+        # A raising sink can't break the command — progress just reports False.
+        assert bridge.progress(cmd.id, "x") is False
+        bridge.complete(cmd.id, "result")
+
+    task = asyncio.create_task(fake_worker())
+    out = await bridge.submit(
+        agent_id="a", kind="claude", cmd="build", timeout=2, on_progress=boom
+    )
+    assert out == "result"  # the command still completed cleanly
+    await task
+
+
 async def test_payload_shape():
     bridge = WorkerBridge()
 
@@ -166,6 +224,15 @@ def test_worker_result_unknown_command(client):
     r = client.post("/v1/worker/result", json={"command_id": "nope", "output": "x"})
     assert r.status_code == 200
     assert r.json()["ok"] is False
+
+
+def test_worker_progress_unknown_command(client):
+    # Endpoint routes to the bridge; an unknown/finished command yields ok False
+    # (and the POST still marks the worker online, like a heartbeat).
+    r = client.post("/v1/worker/progress", json={"command_id": "nope", "chunk": "hi"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+    assert client.get("/v1/worker/status").json()["online"] is True
 
 
 # ── coder connector (claude on the worker) ────────────────────────
