@@ -25,6 +25,11 @@ class ResultBody(BaseModel):
     output: str
 
 
+class ProgressBody(BaseModel):
+    command_id: str
+    chunk: str
+
+
 @router.get("/next", response_model=None)
 async def next_command() -> Response | dict:
     """Long-poll for the next command. 204 if none arrives within the window."""
@@ -38,6 +43,17 @@ async def next_command() -> Response | dict:
 async def post_result(body: ResultBody) -> dict:
     """Hand back the output of a command the worker finished running."""
     ok = get_worker_bridge().complete(body.command_id, body.output)
+    return {"ok": ok}
+
+
+@router.post("/progress")
+async def post_progress(body: ProgressBody) -> dict:
+    """Relay one live progress milestone from a still-running command to its
+    server-side sink, so the user hears what Claude Code is doing as it happens.
+    Also counts as presence — a streaming build keeps the worker marked online."""
+    bridge = get_worker_bridge()
+    bridge.touch()
+    ok = bridge.progress(body.command_id, body.chunk)
     return {"ok": ok}
 
 

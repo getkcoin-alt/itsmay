@@ -101,6 +101,7 @@ class CoderConnector(Connector):
                 str(args.get("goal", "")),
                 bridge=get_worker_bridge(),
                 session_id=ctx.session_id,
+                on_progress=ctx.emit_progress,
             )
             log.info("coder.build", ok=result.get("ok"), opened=result.get("opened"))
             return result

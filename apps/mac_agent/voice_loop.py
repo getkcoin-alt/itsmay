@@ -33,7 +33,12 @@ from dotenv import load_dotenv
 
 from apps.mac_agent.chrome import format_tab_list, list_tabs, read_tab_text
 from apps.mac_agent.tab_watcher import TabWatcher
-from core.voice.narration import narrate_approval, narrate_tool, pop_phrase
+from core.voice.narration import (
+    narrate_approval,
+    narrate_progress,
+    narrate_tool,
+    pop_phrase,
+)
 
 try:
     from apps.mac_agent.vad import BargeInMonitor, EnergyVADRecorder, VADRecorder
@@ -617,6 +622,20 @@ async def turn(
                     spinner.start()
                 except json.JSONDecodeError:
                     pass
+            elif evt == "tool_progress":
+                # A long tool (a Claude Code build) narrating what it's doing
+                # right now — speak it live so a multi-minute build isn't silent.
+                try:
+                    ptext = json.loads(data).get("text", "")
+                except json.JSONDecodeError:
+                    ptext = ""
+                line = narrate_progress(ptext)
+                if line:
+                    if buf.strip():  # flush any half-spoken sentence first
+                        tts_tasks.append(asyncio.create_task(synth(buf.strip())))
+                        buf = ""
+                    tts_tasks.append(asyncio.create_task(synth(line)))
+                    print(f"\n  … {ptext[:200]}", flush=True)
             elif evt == "approval_required":
                 # Blocked server-side pending the operator's OK — say so out loud
                 # instead of going silent; the client re-sends with approval.

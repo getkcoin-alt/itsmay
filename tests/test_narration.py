@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from core.voice.narration import narrate_approval, narrate_tool, pop_phrase
+from core.voice.narration import (
+    narrate_approval,
+    narrate_progress,
+    narrate_tool,
+    pop_phrase,
+)
 
 # ── pop_phrase (IM-4.1) ───────────────────────────────────────────────
 
@@ -59,6 +64,29 @@ def test_narrate_tool_self_modification_is_voiced():
 def test_narrate_tool_expert_fallback():
     assert narrate_tool("ask_engineer") == "On it."  # explicit
     assert narrate_tool("ask_designer") == "Asking my designer."  # generic ask_ fallback
+
+
+def test_narrate_tool_build_is_voiced():
+    assert narrate_tool("coder.build") == "On it — building that now."
+
+
+# ── narrate_progress (streaming-progress v2) ──────────────────────────
+
+
+def test_narrate_progress_passes_through_milestones():
+    assert narrate_progress("Writing index.html") == "Writing index.html"
+    assert narrate_progress("  Running:   npm install  ") == "Running: npm install"
+
+
+def test_narrate_progress_ignores_empty_noise():
+    assert narrate_progress("") is None
+    assert narrate_progress("   ") is None
+    assert narrate_progress("x") is None  # single char isn't worth voicing
+
+
+def test_narrate_progress_clips_long_lines():
+    out = narrate_progress("word " * 100)
+    assert out is not None and out.endswith("…") and len(out) <= 201
 
 
 def test_narrate_tool_unknown_is_silent():
