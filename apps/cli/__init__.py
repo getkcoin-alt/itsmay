@@ -15,6 +15,7 @@ Usage:
   scrappy freeze / unfreeze    kill switch for self-modification (Epic 5 guardrail)
   scrappy secret <name>        give Scrappy a third-party API key (value never shown to him)
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
+  scrappy reindex              rebuild vector indexes for the memory you now have
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
 
@@ -361,6 +362,62 @@ async def _status() -> None:
         except Exception:
             pass  # older server without /status experts — not worth a warning
     print(f"\n  {_DIM}Designed & Developed by Karnveer Singh · www.karnveer.com{_RESET}")
+    print()
+
+
+async def _reindex() -> None:
+    """Rebuild the vector indexes for the amount of memory actually stored.
+
+    An ivfflat index learns its clusters from the rows present when it was built,
+    so one created on an empty table never matches the real data. Run this once
+    memory has built up (and after a big import).
+    """
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+
+    print(f"\n{_BOLD}Rebuilding vector indexes{_RESET}  →  {API_BASE}")
+    print(f"{_DIM}  (briefly locks each index — seconds at personal scale){_RESET}")
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            r = await client.post(
+                f"{API_BASE}/v1/memory/reindex", headers=headers, timeout=300
+            )
+            r.raise_for_status()
+            d = r.json()
+    except httpx.ConnectError:
+        print(f"{_RED}Cannot connect to {API_BASE} — is the server running?{_RESET}")
+        return
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            print(f"{_RED}401 Unauthorized — set VAULT_API_KEY{_RESET}")
+        else:
+            print(f"{_RED}HTTP {e.response.status_code}: {e.response.text[:200]}{_RESET}")
+        return
+    except Exception as e:
+        print(f"{_RED}Reindex failed: {e}{_RESET}")
+        return
+
+    if d.get("skipped"):
+        print(f"  {_DIM}{d.get('note', 'nothing to do on this backend')}{_RESET}")
+        return
+
+    for entry in d.get("indexes", []):
+        mark = f"{_GREEN}✓{_RESET}" if entry.get("ok") else f"{_RED}✗{_RESET}"
+        line = (
+            f"  {mark} {entry.get('index')} — {entry.get('rows')} vectors, "
+            f"lists={entry.get('lists')}"
+        )
+        print(line)
+        if not entry.get("ok"):
+            print(f"      {_RED}{str(entry.get('error', ''))[:160]}{_RESET}")
+
+    probes = d.get("recommended_probes")
+    if probes:
+        print(f"\n  {_YELLOW}Set IVFFLAT_PROBES={probes}{_RESET} "
+              f"{_DIM}in your env, then restart the server.{_RESET}")
+        print(f"  {_DIM}Searches scan that many clusters — the pgvector default of "
+              f"1 would miss most of your memory.{_RESET}")
     print()
 
 
@@ -730,6 +787,23 @@ def _claude_flags() -> str:
     return os.environ.get("SCRAPPY_CLAUDE_FLAGS") or "--dangerously-skip-permissions"
 
 
+def _repo_dir() -> Path | None:
+    """Scrappy's own itsmay checkout on this machine, or None if not found.
+
+    Self-modification has to run inside the real git repo — the per-agent scratch
+    workspace is empty, so `git` commands there fail and Claude Code sees a bare
+    directory it can't do anything with. `SCRAPPY_REPO_DIR` overrides; otherwise
+    we walk up from this installed file, which IS in the repo for an editable
+    install. `.git` may be a file (worktrees), so test existence, not is_dir.
+    """
+    explicit = os.environ.get("SCRAPPY_REPO_DIR", "").strip()
+    if explicit:
+        path = Path(explicit).expanduser()
+        return path if (path / ".git").exists() else None
+    path = Path(__file__).resolve().parents[2]
+    return path if (path / ".git").exists() else None
+
+
 def _worker_workdir(agent_id: str) -> Path:
     """A working directory for an agent's commands that we KNOW is writable.
 
@@ -833,13 +907,27 @@ def _run_local_command(
     *,
     stream: bool = False,
     progress_cb: Callable[[str], None] | None = None,
+    workdir_hint: str = "",
 ) -> str:
     """Execute one agent command locally and return combined stdout+stderr.
 
     `stream=True` (set for coder.build) runs Claude in streaming mode so its
     progress is narrated live; everything else keeps the simple blocking path.
+    `workdir_hint="repo"` runs inside Scrappy's own checkout (self-modification).
     """
-    workdir = _worker_workdir(agent_id)
+    if workdir_hint == "repo":
+        repo = _repo_dir()
+        if repo is None:
+            # Say so plainly rather than running in an empty scratch dir, where
+            # git fails and Claude Code just reports "not a git repository".
+            return (
+                "[worker: can't find Scrappy's own repo on this machine. Run the "
+                "worker from the itsmay checkout, or set SCRAPPY_REPO_DIR to its "
+                "path, then try again.]"
+            )
+        workdir = repo
+    else:
+        workdir = _worker_workdir(agent_id)
     shell = os.environ.get("SHELL", "/bin/bash")
     if kind == "claude" and stream:
         return _run_claude_streaming(cmd, workdir, shell, timeout, progress_cb)
@@ -966,6 +1054,7 @@ async def _serve(client: httpx.AsyncClient, headers: dict, current: dict) -> Non
                 cmd.get("agent_id", "misc"),
                 stream=stream,
                 progress_cb=_post_progress if stream else None,
+                workdir_hint=str(cmd.get("workdir") or ""),
             )
             _display_output(output)
             try:
@@ -1239,6 +1328,10 @@ def main() -> None:
 
     if args and args[0] == "seed":
         asyncio.run(_seed())
+        return
+
+    if args and args[0] == "reindex":
+        asyncio.run(_reindex())
         return
 
     if args and args[0] == "awaken":

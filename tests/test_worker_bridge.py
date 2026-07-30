@@ -122,9 +122,10 @@ async def test_payload_shape():
         payload = cmd.to_payload()
         assert set(payload) == {
             "command_id", "agent_id", "kind", "cmd", "timeout", "task", "thought",
-            "stream_progress",
+            "workdir", "stream_progress",
         }
         assert payload["stream_progress"] is False  # default off; builds opt in
+        assert payload["workdir"] == ""  # default: the per-agent scratch workspace
         bridge.complete(cmd.id, "ok")
 
     task = asyncio.create_task(fake_worker())

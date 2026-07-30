@@ -50,14 +50,17 @@ def slugify(goal: str, *, maxlen: int = 40) -> str:
 def build_prompt(goal: str, branch: str) -> str:
     protected = "\n".join(f"  - {p}" for p in protected_paths())
     return f"""You are implementing a SELF-IMPROVEMENT to Scrappy's own codebase (the \
-'itsmay' repository — Scrappy is a sovereign personal AI operator). Work ONLY in \
-that repository.
+'itsmay' repository — Scrappy is a sovereign personal AI operator).
+
+YOU ARE ALREADY INSIDE THAT REPOSITORY: it is your CURRENT WORKING DIRECTORY. Do
+NOT clone it, do NOT search the filesystem for it, and do NOT `cd` anywhere else.
+Work only here, on the files that are already around you.
 
 GOAL:
 {goal}
 
 STEPS (do all, in order):
-1. In the itsmay repo, confirm the working tree is clean (`git status`). If it is
+1. Confirm the working tree is clean (`git status`). If it is
    dirty, STOP and report that instead of changing anything.
 2. Create and switch to a new branch:  git checkout -b {branch}
 3. Implement the goal with minimal, focused changes that match the surrounding
@@ -189,6 +192,7 @@ async def propose_change(
         cmd=build_prompt(goal, branch),
         timeout=timeout,
         task=f"(self) {goal[:70]}",
+        workdir="repo",  # must run inside the real checkout, not a scratch dir
     )
 
     report = extract_report(raw)

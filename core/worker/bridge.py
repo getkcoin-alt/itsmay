@@ -37,6 +37,10 @@ class WorkerCommand:
     timeout: int
     task: str = ""
     thought: str = ""
+    # Where the worker should run this. "" = the per-agent scratch workspace;
+    # "repo" = Scrappy's own itsmay checkout on the Mac (self-modification needs a
+    # real git repo, not an empty scratch dir).
+    workdir: str = ""
     # Ask the worker to run this (claude) command in streaming mode and POST live
     # milestones back — set for coder.build so a long build narrates itself.
     stream_progress: bool = False
@@ -56,6 +60,7 @@ class WorkerCommand:
             "timeout": self.timeout,
             "task": self.task,
             "thought": self.thought,
+            "workdir": self.workdir,
             "stream_progress": self.stream_progress,
         }
 
@@ -92,6 +97,7 @@ class WorkerBridge:
         timeout: int,
         task: str = "",
         thought: str = "",
+        workdir: str = "",
         stream_progress: bool = False,
         on_progress: Callable[[str], None] | None = None,
     ) -> str:
@@ -110,6 +116,7 @@ class WorkerBridge:
             timeout=timeout,
             task=task,
             thought=thought,
+            workdir=workdir,
             stream_progress=stream_progress,
             future=loop.create_future(),
             on_progress=on_progress,
