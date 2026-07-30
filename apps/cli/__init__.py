@@ -787,6 +787,23 @@ def _claude_flags() -> str:
     return os.environ.get("SCRAPPY_CLAUDE_FLAGS") or "--dangerously-skip-permissions"
 
 
+def _repo_dir() -> Path | None:
+    """Scrappy's own itsmay checkout on this machine, or None if not found.
+
+    Self-modification has to run inside the real git repo — the per-agent scratch
+    workspace is empty, so `git` commands there fail and Claude Code sees a bare
+    directory it can't do anything with. `SCRAPPY_REPO_DIR` overrides; otherwise
+    we walk up from this installed file, which IS in the repo for an editable
+    install. `.git` may be a file (worktrees), so test existence, not is_dir.
+    """
+    explicit = os.environ.get("SCRAPPY_REPO_DIR", "").strip()
+    if explicit:
+        path = Path(explicit).expanduser()
+        return path if (path / ".git").exists() else None
+    path = Path(__file__).resolve().parents[2]
+    return path if (path / ".git").exists() else None
+
+
 def _worker_workdir(agent_id: str) -> Path:
     """A working directory for an agent's commands that we KNOW is writable.
 
@@ -890,13 +907,27 @@ def _run_local_command(
     *,
     stream: bool = False,
     progress_cb: Callable[[str], None] | None = None,
+    workdir_hint: str = "",
 ) -> str:
     """Execute one agent command locally and return combined stdout+stderr.
 
     `stream=True` (set for coder.build) runs Claude in streaming mode so its
     progress is narrated live; everything else keeps the simple blocking path.
+    `workdir_hint="repo"` runs inside Scrappy's own checkout (self-modification).
     """
-    workdir = _worker_workdir(agent_id)
+    if workdir_hint == "repo":
+        repo = _repo_dir()
+        if repo is None:
+            # Say so plainly rather than running in an empty scratch dir, where
+            # git fails and Claude Code just reports "not a git repository".
+            return (
+                "[worker: can't find Scrappy's own repo on this machine. Run the "
+                "worker from the itsmay checkout, or set SCRAPPY_REPO_DIR to its "
+                "path, then try again.]"
+            )
+        workdir = repo
+    else:
+        workdir = _worker_workdir(agent_id)
     shell = os.environ.get("SHELL", "/bin/bash")
     if kind == "claude" and stream:
         return _run_claude_streaming(cmd, workdir, shell, timeout, progress_cb)
@@ -1023,6 +1054,7 @@ async def _serve(client: httpx.AsyncClient, headers: dict, current: dict) -> Non
                 cmd.get("agent_id", "misc"),
                 stream=stream,
                 progress_cb=_post_progress if stream else None,
+                workdir_hint=str(cmd.get("workdir") or ""),
             )
             _display_output(output)
             try:

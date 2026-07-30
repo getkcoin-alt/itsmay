@@ -42,7 +42,7 @@ class FakeBridge:
     def worker_online(self) -> bool:
         return self._online
 
-    async def submit(self, *, agent_id, kind, cmd, timeout, task=""):  # noqa: ASYNC109
+    async def submit(self, *, agent_id, kind, cmd, timeout, task="", workdir=""):  # noqa: ASYNC109, E501
         self.calls.append({"kind": kind, "cmd": cmd})
         return self._responder(cmd)
 

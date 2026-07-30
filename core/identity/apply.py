@@ -168,6 +168,7 @@ async def apply_change(
         cmd=f"git diff --name-only main...{branch}",
         timeout=_DIFF_TIMEOUT,
         task="(self) apply preflight diff",
+        workdir="repo",
     )
     files = [ln.strip() for ln in diff_raw.splitlines() if ln.strip()]
 
@@ -191,6 +192,7 @@ async def apply_change(
         cmd=build_apply_script(branch, message),
         timeout=_APPLY_TIMEOUT,
         task=f"(self) apply {branch}",
+        workdir="repo",
     )
     marker = _marker(out, ("APPLY_OK", "APPLY_ROLLED_BACK", "APPLY_FAILED"))
     applied = bool(marker and marker.startswith("APPLY_OK"))
@@ -244,6 +246,7 @@ async def rollback(*, bridge: _Bridge, session_id: str | None = None) -> Rollbac
         cmd=build_rollback_script(),
         timeout=_ROLLBACK_TIMEOUT,
         task="(self) rollback to last-good",
+        workdir="repo",
     )
     marker = _marker(out, ("ROLLED_BACK", "ROLLBACK_FAILED"))
     ok = bool(marker and marker.startswith("ROLLED_BACK"))
