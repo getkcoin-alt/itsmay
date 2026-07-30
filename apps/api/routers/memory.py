@@ -26,6 +26,36 @@ KNOWLEDGE_FILE = Path(__file__).resolve().parents[3] / "scripts" / "knowledge.ya
 SEED_SOURCE = "seed:knowledge.yaml"
 
 
+@router.post("/reindex")
+async def reindex() -> dict:
+    """Rebuild the pgvector indexes, sized for the data that's actually stored.
+
+    Worth running once real memory has accumulated: an ivfflat index trains its
+    clusters from the rows present when it was built, so one created on an empty
+    table never learns the shape of the data. Postgres-only — SQLite scores
+    vectors directly and has nothing to rebuild.
+    """
+    from core.memory.backend import resolve_backend
+
+    if resolve_backend() != "postgres":
+        return {
+            "ok": True,
+            "skipped": True,
+            "backend": "sqlite",
+            "note": (
+                "SQLite scores every vector directly — there's no ANN index to "
+                "rebuild, and recall is already exact."
+            ),
+        }
+
+    from core.memory.db import get_pool
+    from core.memory.maintenance import reindex_vector_indexes
+
+    result = await reindex_vector_indexes(await get_pool())
+    log.info("memory.reindex", ok=result.get("ok"))
+    return {"backend": "postgres", "skipped": False, **result}
+
+
 @router.get("/stats")
 async def memory_stats(
     episodic: EpisodicStore = Depends(get_episodic),

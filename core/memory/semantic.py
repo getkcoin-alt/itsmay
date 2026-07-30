@@ -92,7 +92,13 @@ class SemanticStore:
         settings = get_settings()
         candidate_limit = max(k * max(settings.retrieval_candidate_fanout, 1), k)
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
+            # How many ivfflat clusters stage 1 may scan. pgvector defaults to 1,
+            # which against a many-cluster index leaves most memories unreachable.
+            # SET LOCAL keeps it scoped to this transaction, so it can't leak into
+            # the next query on a pooled connection.
+            if settings.ivfflat_probes > 0:
+                await conn.execute(f"SET LOCAL ivfflat.probes = {int(settings.ivfflat_probes)}")
             rows = await conn.fetch(
                 """
                 WITH candidates AS (

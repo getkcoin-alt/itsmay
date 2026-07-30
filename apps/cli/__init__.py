@@ -15,6 +15,7 @@ Usage:
   scrappy freeze / unfreeze    kill switch for self-modification (Epic 5 guardrail)
   scrappy secret <name>        give Scrappy a third-party API key (value never shown to him)
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
+  scrappy reindex              rebuild vector indexes for the memory you now have
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
 
@@ -361,6 +362,62 @@ async def _status() -> None:
         except Exception:
             pass  # older server without /status experts — not worth a warning
     print(f"\n  {_DIM}Designed & Developed by Karnveer Singh · www.karnveer.com{_RESET}")
+    print()
+
+
+async def _reindex() -> None:
+    """Rebuild the vector indexes for the amount of memory actually stored.
+
+    An ivfflat index learns its clusters from the rows present when it was built,
+    so one created on an empty table never matches the real data. Run this once
+    memory has built up (and after a big import).
+    """
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+
+    print(f"\n{_BOLD}Rebuilding vector indexes{_RESET}  →  {API_BASE}")
+    print(f"{_DIM}  (briefly locks each index — seconds at personal scale){_RESET}")
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            r = await client.post(
+                f"{API_BASE}/v1/memory/reindex", headers=headers, timeout=300
+            )
+            r.raise_for_status()
+            d = r.json()
+    except httpx.ConnectError:
+        print(f"{_RED}Cannot connect to {API_BASE} — is the server running?{_RESET}")
+        return
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            print(f"{_RED}401 Unauthorized — set VAULT_API_KEY{_RESET}")
+        else:
+            print(f"{_RED}HTTP {e.response.status_code}: {e.response.text[:200]}{_RESET}")
+        return
+    except Exception as e:
+        print(f"{_RED}Reindex failed: {e}{_RESET}")
+        return
+
+    if d.get("skipped"):
+        print(f"  {_DIM}{d.get('note', 'nothing to do on this backend')}{_RESET}")
+        return
+
+    for entry in d.get("indexes", []):
+        mark = f"{_GREEN}✓{_RESET}" if entry.get("ok") else f"{_RED}✗{_RESET}"
+        line = (
+            f"  {mark} {entry.get('index')} — {entry.get('rows')} vectors, "
+            f"lists={entry.get('lists')}"
+        )
+        print(line)
+        if not entry.get("ok"):
+            print(f"      {_RED}{str(entry.get('error', ''))[:160]}{_RESET}")
+
+    probes = d.get("recommended_probes")
+    if probes:
+        print(f"\n  {_YELLOW}Set IVFFLAT_PROBES={probes}{_RESET} "
+              f"{_DIM}in your env, then restart the server.{_RESET}")
+        print(f"  {_DIM}Searches scan that many clusters — the pgvector default of "
+              f"1 would miss most of your memory.{_RESET}")
     print()
 
 
@@ -1239,6 +1296,10 @@ def main() -> None:
 
     if args and args[0] == "seed":
         asyncio.run(_seed())
+        return
+
+    if args and args[0] == "reindex":
+        asyncio.run(_reindex())
         return
 
     if args and args[0] == "awaken":

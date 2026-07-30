@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     # Candidate pool multiplier for the two-stage vector search: stage 1 uses the
     # pgvector index to pull k*this rows, stage 2 re-ranks them by importance.
     retrieval_candidate_fanout: int = 5
+    # How many ivfflat clusters a search scans (Postgres only). pgvector defaults
+    # to 1, which against a many-cluster index means most memories are never even
+    # looked at. `scrappy reindex` reports the value that matches your data size.
+    # 0 leaves the server default alone.
+    ivfflat_probes: int = 10
 
     # ── STT ───────────────────────────────────────────────────────
     # provider: "groq" (OpenAI-compatible /audio/transcriptions) or "local" (faster-whisper)
