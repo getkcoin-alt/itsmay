@@ -775,6 +775,7 @@ async def _speak_awakening(client: httpx.AsyncClient, player: AudioPlayer) -> No
 async def main() -> None:
     mode = "VAD auto-detect" if _HAS_VAD else "push-to-talk"
     print(f"Vault Zeta voice agent  →  {API_BASE}  ({mode})")
+    print("Designed & Developed by Karnveer Singh · www.karnveer.com · © 2026")
     print("Loading session…", end=" ", flush=True)
     session_id: str | None = (
         SESSION_FILE.read_text().strip() if SESSION_FILE.exists() else None
