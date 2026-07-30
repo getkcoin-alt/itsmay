@@ -144,21 +144,30 @@ async def stream_chat(client: httpx.AsyncClient, text: str, session_id: str | No
         "POST", f"{API_BASE}/v1/chat", json=body, headers=headers, timeout=600
     ) as resp:
         resp.raise_for_status()
+        # An SSE `data:` field can't contain a newline, so multi-line text arrives
+        # as consecutive `data:` lines that must be rejoined at the frame boundary
+        # (a blank line). Yielding them one-by-one drops every newline — which
+        # also breaks phrase splitting, since pop_phrase breaks on "\n".
+        data_lines: list[str] = []
         async for line in resp.aiter_lines():
-            if not line:
-                continue
             if line.startswith(":"):  # SSE comment / keepalive
+                continue
+            if not line:  # frame boundary
+                if data_lines:
+                    yield event, "\n".join(data_lines)
+                    if event in ("done", "error"):
+                        return
+                    data_lines = []
+                event = "message"
                 continue
             if line.startswith("event:"):
                 event = line[6:].strip()
-                continue
-            if line.startswith("data:"):
-                # SSE: strip exactly ONE leading space (the field-format space),
-                # not all whitespace — token deltas often start with a space.
-                data = line[6:] if line.startswith("data: ") else line[5:]
-                yield event, data
-                if event == "done" or event == "error":
-                    return
+            elif line.startswith("data:"):
+                # Strip exactly ONE leading space (the field-format space), not all
+                # whitespace — token deltas often start with a space.
+                data_lines.append(line[6:] if line.startswith("data: ") else line[5:])
+        if data_lines:
+            yield event, "\n".join(data_lines)
 
 
 async def tts_to_file(client: httpx.AsyncClient, text: str, out: Path) -> None:

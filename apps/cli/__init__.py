@@ -32,15 +32,18 @@ import contextlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+
+from . import render
 
 # Repo-local .env (dev), then the installed user config. load_dotenv never
 # overrides an already-set var, so a real `export` and dev's .env both win over
@@ -84,6 +87,35 @@ def _save_session(session_id: str) -> None:
     SESSION_FILE.write_text(session_id)
 
 
+async def _sse_events(resp) -> AsyncIterator[tuple[str, str]]:
+    """Yield (event, data) per SSE frame, with multi-line data reassembled.
+
+    An SSE `data:` field can't hold a newline, so the server splits multi-line
+    text across consecutive `data:` lines. They must be rejoined with "\\n" at the
+    frame boundary (a blank line) — handling them one at a time silently eats
+    every newline in the reply, which is what turned Scrappy's lists into a wall.
+    """
+    event = "message"
+    data_lines: list[str] = []
+    async for line in resp.aiter_lines():
+        if line.startswith(":"):  # comment / keep-alive
+            continue
+        if not line:  # frame boundary — dispatch what we gathered
+            if data_lines:
+                yield event, "\n".join(data_lines)
+                data_lines = []
+            event = "message"
+            continue
+        if line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            # Strip exactly ONE leading space (the field-format space) — token
+            # deltas legitimately start with a space.
+            data_lines.append(line[6:] if line.startswith("data: ") else line[5:])
+    if data_lines:
+        yield event, "\n".join(data_lines)
+
+
 async def _stream_turn(message: str, session_id: str | None) -> str | None:
     """POST one message to /v1/chat, stream tokens live, return the new session_id."""
     body: dict = {"message": message, "channel": "terminal"}
@@ -91,7 +123,19 @@ async def _stream_turn(message: str, session_id: str | None) -> str | None:
         body["session_id"] = session_id
 
     new_session_id = session_id
-    event = "message"
+    pal = render.Palette(bold=_BOLD, dim=_DIM, cyan=_CYAN, green=_GREEN, reset=_RESET)
+    width = render.clamp_width(shutil.get_terminal_size((80, 24)).columns)
+    out = render.ReplyRenderer(width, pal)
+
+    def _emit(lines: list[str]) -> None:
+        for ln in lines:
+            print(ln, flush=True)
+
+    def _activity(text: str) -> None:
+        """Tool/progress note — its own line(s), wrapped, never glued to the reply."""
+        _emit(out.flush())
+        for ln in render.wrap(text, width, indent="  ", hang="    "):
+            print(f"{_DIM}{ln}{_RESET}", flush=True)
 
     try:
         async with httpx.AsyncClient(timeout=180) as client:
@@ -100,20 +144,9 @@ async def _stream_turn(message: str, session_id: str | None) -> str | None:
                 json=body, headers=_auth_headers(),
             ) as resp:
                 resp.raise_for_status()
-                print(f"\n{_GREEN}Scrappy{_RESET}  ", end="", flush=True)
+                print(f"\n{_GREEN}{_BOLD}Scrappy{_RESET}", flush=True)
 
-                async for line in resp.aiter_lines():
-                    if not line or line.startswith(":"):
-                        continue
-                    if line.startswith("event:"):
-                        event = line[6:].strip()
-                        continue
-                    if not line.startswith("data:"):
-                        continue
-
-                    # SSE spec: strip exactly one leading space from data field.
-                    data = line[6:] if line.startswith("data: ") else line[5:]
-
+                async for event, data in _sse_events(resp):
                     if event == "session":
                         try:
                             new_session_id = json.loads(data)["session_id"]
@@ -122,36 +155,46 @@ async def _stream_turn(message: str, session_id: str | None) -> str | None:
                             pass
 
                     elif event == "token":
-                        print(data, end="", flush=True)
+                        _emit(out.feed(data))
 
                     elif event == "tool_call":
                         try:
                             tc = json.loads(data)
-                            args_str = json.dumps(tc.get("arguments", {}))
-                            print(
-                                f"\n  {_DIM}→ {tc.get('name')}({args_str}){_RESET}",
-                                end="", flush=True,
-                            )
+                            _activity(f"→ {tc.get('name')}")
+                        except Exception:
+                            pass
+
+                    elif event == "tool_start":
+                        try:
+                            _activity(f"→ {json.loads(data).get('tool', '')}…")
+                        except Exception:
+                            pass
+
+                    elif event == "tool_progress":
+                        try:
+                            _activity(f"… {json.loads(data).get('text', '')}")
                         except Exception:
                             pass
 
                     elif event == "status":
                         try:
                             st = json.loads(data)
-                            summary = str(st.get("result", ""))[:100]
-                            print(
-                                f"\n  {_DIM}✓ {st.get('tool')}: {summary}{_RESET}",
-                                end="", flush=True,
+                            summary = render.summarize_tool_result(
+                                str(st.get("tool", "")), str(st.get("result", ""))
                             )
+                            _activity(f"✓ {summary}")
                         except Exception:
                             pass
 
                     elif event == "done":
+                        _emit(out.flush())
+                        if not out.wrote_any:
+                            print(f"  {_DIM}(no reply — try rephrasing){_RESET}", flush=True)
                         try:
                             d = json.loads(data)
-                            tok_in = d.get("tokens_in", 0)
-                            tok_out = d.get("tokens_out", 0)
-                            lat = d.get("latency_ms", 0)
+                            tok_in = d.get("tokens_in") or 0
+                            tok_out = d.get("tokens_out") or 0
+                            lat = d.get("latency_ms") or 0
                             print(
                                 f"\n{_DIM}  [{tok_in} in / {tok_out} out / {lat}ms]{_RESET}",
                                 flush=True,
@@ -161,6 +204,7 @@ async def _stream_turn(message: str, session_id: str | None) -> str | None:
                         return new_session_id
 
                     elif event == "error":
+                        _emit(out.flush())
                         try:
                             err = json.loads(data)
                             print(f"\n{_RED}Error: {err.get('error', data)}{_RESET}", flush=True)
