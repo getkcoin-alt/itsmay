@@ -330,10 +330,11 @@ class SqliteSemanticStore:
         k: int = 8,
         *,
         min_importance: float = 0.0,
+        min_similarity: float = 0.0,
         kinds: set[str] | None = None,
     ) -> list[RetrievedMemory]:
         return await asyncio.to_thread(
-            self._search, user_id, query_embedding, k, min_importance, kinds
+            self._search, user_id, query_embedding, k, min_importance, kinds, min_similarity
         )
 
     def _search(
@@ -343,6 +344,7 @@ class SqliteSemanticStore:
         k: int,
         min_importance: float,
         kinds: set[str] | None = None,
+        min_similarity: float = 0.0,
     ) -> list[RetrievedMemory]:
         q = np.asarray(query_embedding, dtype=np.float32)
         now = datetime.now(UTC)
@@ -391,6 +393,13 @@ class SqliteSemanticStore:
             # Descending by rank, stable tie-break on original order (matches the
             # previous Python `list.sort(reverse=True)` exactly).
             order = np.argsort(-ranks, kind="stable")[:k]
+            # Drop hits that aren't actually related (parity with the Postgres
+            # backend's floor) — an unrelated memory in the prompt is worse than
+            # no memory at all.
+            if min_similarity > 0.0:
+                order = np.array(
+                    [i for i in order if sims[i] >= min_similarity], dtype=int
+                )
 
             if order.size:
                 ids = [candidates[i]["id"] for i in order]

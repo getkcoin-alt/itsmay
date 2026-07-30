@@ -346,6 +346,20 @@ async def _status() -> None:
                 print(_format_key_line(k))
         elif (hd.get("llm") or {}).get("ok"):
             print(f"  {mark(None)} keys — no pool reported (single key or none)")
+
+        # Which experts Scrappy can delegate to, and why any are missing.
+        try:
+            st = (await client.get(f"{API_BASE}/status", headers=headers)).json()
+            experts = st.get("experts") or {}
+            online = experts.get("online") or []
+            offline = experts.get("offline") or {}
+            if online:
+                print(f"  {mark(True)} experts — {', '.join(online)}")
+            for name, missing in sorted(offline.items()):
+                need = ", ".join(missing) or "unknown"
+                print(f"  {mark(False)} {name} — needs the {need} connector")
+        except Exception:
+            pass  # older server without /status experts — not worth a warning
     print(f"\n  {_DIM}Designed & Developed by Karnveer Singh · www.karnveer.com{_RESET}")
     print()
 

@@ -179,6 +179,16 @@ def create_app() -> FastAPI:
 
     @app.get("/status", tags=["meta"])
     async def status() -> dict:
+        # Which experts are actually online. An expert is withheld when a connector
+        # it needs is missing (e.g. ask_email without the `gmail` extra), so surface
+        # that instead of leaving it a silent absence.
+        from core.agents.experts import ALL_EXPERTS
+        from core.agents.registry import get_agent_registry
+        from core.connectors.registry import get_registry as _connectors
+
+        agents = get_agent_registry()
+        online = {s.name for s in agents.available}
+        installed = set(_connectors().connectors.keys())
         return {
             "name": "Vault Zeta Node SSN-92C",
             "agent": "Scrappy Singh",
@@ -187,6 +197,15 @@ def create_app() -> FastAPI:
             "llm_model": settings.llm_model,
             "stt_provider": settings.stt_provider,
             "auth_enabled": bool(settings.vault_api_key),
+            "connectors": sorted(installed),
+            "experts": {
+                "online": sorted(f"ask_{n}" for n in online),
+                "offline": {
+                    f"ask_{s.name}": sorted(set(s.tool_namespaces) - installed)
+                    for s in ALL_EXPERTS
+                    if s.name not in online
+                },
+            },
             "copyright": (
                 "© 2026 Karnveer Singh — Designed & Developed by "
                 "Karnveer Singh (www.karnveer.com)"

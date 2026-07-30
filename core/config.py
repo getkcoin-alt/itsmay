@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     embed_dim: int = 384
     retrieval_k: int = 8
     recent_message_window: int = 12
+    # Cosine-similarity floor for retrieved memories. Vector search always returns
+    # its k nearest rows, however unrelated they are — without a floor, an empty
+    # or off-topic store still pads every prompt with noise (and the model then
+    # tries to use it). ~0.25 keeps genuinely related hits for bge-small.
+    retrieval_min_similarity: float = 0.25
+    # Candidate pool multiplier for the two-stage vector search: stage 1 uses the
+    # pgvector index to pull k*this rows, stage 2 re-ranks them by importance.
+    retrieval_candidate_fanout: int = 5
 
     # ── STT ───────────────────────────────────────────────────────
     # provider: "groq" (OpenAI-compatible /audio/transcriptions) or "local" (faster-whisper)

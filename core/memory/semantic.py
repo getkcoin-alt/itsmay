@@ -9,6 +9,7 @@ from uuid import UUID
 
 import numpy as np
 
+from core.config import get_settings
 from core.memory.db import get_pool
 
 MemoryKind = Literal["episodic", "semantic", "factual", "procedural", "reflection"]
@@ -73,24 +74,43 @@ class SemanticStore:
         k: int = 8,
         *,
         min_importance: float = 0.0,
+        min_similarity: float = 0.0,
         kinds: set[str] | None = None,
     ) -> list[RetrievedMemory]:
         """Vector search with importance-weighted ranking. `kinds` restricts to
-        those memory kinds (e.g. {"procedural"} to retrieve only playbooks)."""
+        those memory kinds (e.g. {"procedural"} to retrieve only playbooks).
+
+        Two-stage on purpose. pgvector can only use the ivfflat index for a bare
+        `ORDER BY embedding <=> $vec`; wrapping that in arithmetic (as the
+        importance weighting does) makes the expression opaque to the planner and
+        silently degrades every search into a sequential scan that computes cosine
+        distance for EVERY row. So stage 1 does the plain indexed nearest-neighbour
+        pull, and stage 2 re-ranks that candidate pool by importance — same
+        ranking, but the index does the heavy lifting.
+        """
         kind_filter = sorted(kinds) if kinds else None
+        settings = get_settings()
+        candidate_limit = max(k * max(settings.retrieval_candidate_fanout, 1), k)
         pool = await get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, kind, content, importance, created_at,
-                       1 - (embedding <=> $2) AS similarity
-                FROM memories
-                WHERE user_id = $1
-                  AND embedding IS NOT NULL
-                  AND importance >= $4
-                  AND (decay_after IS NULL OR decay_after > now())
-                  AND ($5::text[] IS NULL OR kind::text = ANY($5::text[]))
-                ORDER BY (1 - (embedding <=> $2)) * (0.5 + 0.5 * importance) DESC
+                WITH candidates AS (
+                    SELECT id, kind, content, importance, created_at,
+                           1 - (embedding <=> $2) AS similarity
+                    FROM memories
+                    WHERE user_id = $1
+                      AND embedding IS NOT NULL
+                      AND importance >= $4
+                      AND (decay_after IS NULL OR decay_after > now())
+                      AND ($5::text[] IS NULL OR kind::text = ANY($5::text[]))
+                    ORDER BY embedding <=> $2   -- bare distance → ivfflat index
+                    LIMIT $6
+                )
+                SELECT id, kind, content, importance, created_at, similarity
+                FROM candidates
+                WHERE similarity >= $7
+                ORDER BY similarity * (0.5 + 0.5 * importance) DESC
                 LIMIT $3
                 """,
                 user_id,
@@ -98,6 +118,8 @@ class SemanticStore:
                 k,
                 min_importance,
                 kind_filter,
+                candidate_limit,
+                min_similarity,
             )
             # bump usage counters in background-ish fashion (single statement)
             if rows:

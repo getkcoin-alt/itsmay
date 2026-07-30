@@ -50,7 +50,9 @@ class AgentRegistry:
             description = (
                 f"Delegate to the {spec.title}, expert in: {spec.expertise} "
                 "Hand off a clear, self-contained task; you get back a "
-                "synthesized answer to relay or act on."
+                "synthesized answer to relay or act on. Do NOT call this for "
+                "greetings, chat, opinions, or questions about your own "
+                "capabilities — answer those yourself."
             )
             out.append(
                 {
