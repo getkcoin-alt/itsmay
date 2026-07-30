@@ -129,6 +129,21 @@ body {
 }
 .conn-label { font-size: 0.75rem; color: var(--text-muted); }
 .settings-nav-item { margin-top: 2px; }
+.sidebar-credit {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.625rem 0.15rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.62rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  text-decoration: none;
+  letter-spacing: 0.01em;
+  transition: color 0.15s ease;
+}
+.sidebar-credit:hover { color: var(--text-dim); }
+.sidebar-credit strong { color: var(--text-dim); font-weight: 600; }
+.sidebar-credit .credit-site { font-family: var(--mono); }
 
 /* ── Mobile bar & nav ────────────────────────────────────────────── */
 .mobile-bar {

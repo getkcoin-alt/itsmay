@@ -1,7 +1,10 @@
 /* Vault Zeta console — vanilla SPA.
  * Same-origin API, auth via Bearer token in localStorage.
  * SSE uses fetch + ReadableStream so we can set Authorization
- * (EventSource can't). Markdown is rendered after streaming completes. */
+ * (EventSource can't). Markdown is rendered after streaming completes.
+ *
+ * Designed & Developed by Karnveer Singh — https://www.karnveer.com
+ * © 2026 Karnveer Singh. */
 
 const KEY_NAME     = "vault_api_key";
 const SESSION_NAME = "vault_session_id";
