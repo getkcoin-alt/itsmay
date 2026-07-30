@@ -302,6 +302,7 @@ async def _status() -> None:
                 print(_format_key_line(k))
         elif (hd.get("llm") or {}).get("ok"):
             print(f"  {mark(None)} keys — no pool reported (single key or none)")
+    print(f"\n  {_DIM}Designed & Developed by Karnveer Singh · www.karnveer.com{_RESET}")
     print()
 
 

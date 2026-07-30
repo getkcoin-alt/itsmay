@@ -5,8 +5,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from apps.api.middleware.auth import BearerAuthMiddleware
@@ -70,6 +70,22 @@ async def lifespan(app: FastAPI):
         await close_pool()
 
 
+def _inject_site_verification(html: str, token: str) -> str:
+    """Insert the Google Search Console `<meta>` verification tag into <head>.
+
+    No-op when token is empty. Env-driven so the token never has to be committed
+    into the static HTML.
+    """
+    token = (token or "").strip()
+    if not token:
+        return html
+    safe = token.replace('"', "&quot;").replace("<", "").replace(">", "")
+    tag = f'  <meta name="google-site-verification" content="{safe}" />\n'
+    if "</head>" in html:
+        return html.replace("</head>", tag + "</head>", 1)
+    return tag + html
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
@@ -86,7 +102,10 @@ def create_app() -> FastAPI:
     app.add_middleware(
         BearerAuthMiddleware,
         token=settings.vault_api_key,
-        allow_paths=("/", "/status", "/v1/live", "/v1/health", "/favicon.ico"),
+        allow_paths=(
+            "/", "/status", "/v1/live", "/v1/health", "/favicon.ico",
+            "/robots.txt", "/sitemap.xml",
+        ),
         allow_prefixes=("/static/",),
     )
 
@@ -100,11 +119,41 @@ def create_app() -> FastAPI:
     app.include_router(worker_router.router)
 
     static_dir = Path(__file__).parent / "static"
+    index_html = static_dir / "index.html"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.get("/", include_in_schema=False)
-    async def console() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+    async def console() -> Response:
+        # Serve the console shell. When a Google Search Console token is set, weave
+        # its verification tag into <head> so the homepage proves site ownership.
+        token = settings.google_site_verification
+        if token:
+            return HTMLResponse(
+                _inject_site_verification(index_html.read_text(encoding="utf-8"), token)
+            )
+        return FileResponse(index_html)
+
+    @app.get("/robots.txt", include_in_schema=False)
+    async def robots(request: Request) -> PlainTextResponse:
+        sitemap_url = str(request.base_url).rstrip("/") + "/sitemap.xml"
+        body = (
+            "User-agent: *\n"
+            "Disallow: /v1/\n"  # keep crawlers out of the API surface
+            "Allow: /\n"
+            f"Sitemap: {sitemap_url}\n"
+        )
+        return PlainTextResponse(body)
+
+    @app.get("/sitemap.xml", include_in_schema=False)
+    async def sitemap(request: Request) -> Response:
+        root = str(request.base_url).rstrip("/") + "/"
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            f"  <url><loc>{root}</loc></url>\n"
+            "</urlset>\n"
+        )
+        return Response(content=xml, media_type="application/xml")
 
     @app.get("/v1/live", tags=["meta"])
     async def live() -> dict:
@@ -124,6 +173,10 @@ def create_app() -> FastAPI:
             "llm_model": settings.llm_model,
             "stt_provider": settings.stt_provider,
             "auth_enabled": bool(settings.vault_api_key),
+            "copyright": (
+                "© 2026 Karnveer Singh — Designed & Developed by "
+                "Karnveer Singh (www.karnveer.com)"
+            ),
         }
 
     return app

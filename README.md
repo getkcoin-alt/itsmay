@@ -239,3 +239,9 @@ That's it — `ask_<name>` appears in Scrappy's toolbox automatically.
 8. Calendar connector → calendar expert
 9. Goals/tasks + planner/executor expert
 10. Critic + Learner + nightly memory consolidation
+
+## Copyright & Credits
+
+**Designed & Developed by Karnveer Singh** — [www.karnveer.com](https://www.karnveer.com)
+
+© 2026 Karnveer Singh. Scrappy Singh and the Vault Zeta node are his work.

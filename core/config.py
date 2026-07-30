@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     api_port: int = 8000
     log_level: str = "INFO"
 
+    # ── SEO / site verification ──────────────────────────────────
+    # Google Search Console "HTML tag" verification token. When set, the console
+    # homepage (/) serves a <meta name="google-site-verification"> tag so Google
+    # can verify ownership. Empty = no tag emitted. Not secret; env-driven so it
+    # never has to live in the committed HTML.
+    google_site_verification: str = ""
+
     # ── Auth (Mac ↔ Railway public URL) ──────────────────────────
     # Empty string = open mode, which serves LOOPBACK callers only (local dev);
     # remote requests are refused with 403 until a key is set (fail-closed —
