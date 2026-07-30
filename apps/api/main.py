@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from apps.api.middleware.auth import BearerAuthMiddleware
@@ -86,6 +86,20 @@ def _inject_site_verification(html: str, token: str) -> str:
     return tag + html
 
 
+def _render_index(html: str, *, base_url: str, gsc_token: str = "") -> str:
+    """Weave host-specific tags into the console shell: the Google verification
+    meta (when configured) and absolute social-preview URLs — some crawlers reject
+    a relative og:image and expect an og:url."""
+    base = base_url.rstrip("/")
+    html = _inject_site_verification(html, gsc_token)
+    html = html.replace('content="/static/og-image.png"', f'content="{base}/static/og-image.png"')
+    if "</head>" in html:
+        html = html.replace(
+            "</head>", f'  <meta property="og:url" content="{base}/" />\n</head>', 1
+        )
+    return html
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
@@ -123,15 +137,15 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.get("/", include_in_schema=False)
-    async def console() -> Response:
-        # Serve the console shell. When a Google Search Console token is set, weave
-        # its verification tag into <head> so the homepage proves site ownership.
-        token = settings.google_site_verification
-        if token:
-            return HTMLResponse(
-                _inject_site_verification(index_html.read_text(encoding="utf-8"), token)
-            )
-        return FileResponse(index_html)
+    async def console(request: Request) -> HTMLResponse:
+        # Serve the console shell with host-specific tags (Search Console
+        # verification + absolute social-preview URLs) woven into <head>.
+        html = _render_index(
+            index_html.read_text(encoding="utf-8"),
+            base_url=str(request.base_url),
+            gsc_token=settings.google_site_verification,
+        )
+        return HTMLResponse(html)
 
     @app.get("/robots.txt", include_in_schema=False)
     async def robots(request: Request) -> PlainTextResponse:

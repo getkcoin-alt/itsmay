@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.api.main import _inject_site_verification
+from apps.api.main import _inject_site_verification, _render_index
 
 
 @pytest.fixture
@@ -39,6 +39,45 @@ def test_inject_meta_sanitizes_token():
 def test_inject_meta_without_head_prepends():
     out = _inject_site_verification("<body>hi</body>", "tok")
     assert out.startswith('  <meta name="google-site-verification" content="tok" />')
+
+
+# ── social preview (OpenGraph / Twitter) ──────────────────────────────
+
+
+def test_render_index_makes_og_urls_absolute():
+    html = (
+        '<head><meta property="og:image" content="/static/og-image.png" />'
+        '<meta name="twitter:image" content="/static/og-image.png" /></head>'
+    )
+    out = _render_index(html, base_url="https://app.example.com/")
+    # Both relative image refs promoted to absolute; og:url injected.
+    assert out.count('content="https://app.example.com/static/og-image.png"') == 2
+    assert "/static/og-image.png" not in out.replace(
+        "https://app.example.com/static/og-image.png", ""
+    )
+    assert '<meta property="og:url" content="https://app.example.com/" />' in out
+
+
+def test_render_index_also_injects_verification_token():
+    out = _render_index("<head></head>", base_url="https://x.test/", gsc_token="tok")
+    assert 'name="google-site-verification" content="tok"' in out
+    assert 'property="og:url" content="https://x.test/"' in out
+
+
+def test_home_page_serves_absolute_social_tags(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'property="og:title"' in r.text
+    assert 'name="twitter:card" content="summary_large_image"' in r.text
+    # og:image absolute to the live host; og:url present.
+    assert 'content="http://testserver/static/og-image.png"' in r.text
+    assert 'property="og:url" content="http://testserver/"' in r.text
+
+
+def test_og_image_is_served(client):
+    r = client.get("/static/og-image.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
 
 
 # ── robots + sitemap (served open, for crawlers) ──────────────────────
