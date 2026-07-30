@@ -135,12 +135,17 @@ async def chat(
 
     recent = await episodic.recent_window(session_id, recent_n)
     if user_embedding is not None:
+        # A similarity floor keeps unrelated memories out of the prompt entirely —
+        # padding context with noise makes answers worse, not better.
+        min_sim = settings.retrieval_min_similarity
         retrieved = await semantic.search(
-            user_id, user_embedding, k=retrieval_k, kinds=_FACT_KINDS
+            user_id, user_embedding, k=retrieval_k,
+            kinds=_FACT_KINDS, min_similarity=min_sim,
         )
         # A couple of relevant playbooks (procedural memory) for this goal.
         playbooks = await semantic.search(
-            user_id, user_embedding, k=2, kinds={"procedural"}
+            user_id, user_embedding, k=2,
+            kinds={"procedural"}, min_similarity=min_sim,
         )
     else:
         retrieved = []
