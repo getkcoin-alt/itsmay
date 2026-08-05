@@ -75,6 +75,24 @@ def parse_result(output: str) -> dict | None:
     return None
 
 
+def build_memory_line(goal: str, summary: str, target: str | None) -> str:
+    """A durable, self-contained sentence recording that Scrappy built something.
+
+    Without this a build leaves no trace: asked later "did you make me anything?",
+    Scrappy has nothing to recall and goes hunting the filesystem instead of just
+    remembering. A memory must stand alone, so it names the goal, what was built,
+    and where it landed.
+    """
+    goal = " ".join((goal or "").split())
+    summary = " ".join((summary or "").split())
+    line = f"Built software for Karnveer with Claude Code: {summary or goal}."
+    if goal and summary and goal.lower() not in summary.lower():
+        line = f"Built software for Karnveer with Claude Code — asked for '{goal}': {summary}."
+    if target:
+        line += f" It opens with '{target}' in the scrappy-workspace on his Mac."
+    return line
+
+
 def _safe_target(target: str) -> bool:
     """A file/app/URL safe to pass to `open` — no shell metacharacters, bounded length."""
     target = (target or "").strip()

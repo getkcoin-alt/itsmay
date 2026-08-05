@@ -15,11 +15,38 @@ from __future__ import annotations
 from typing import Any
 
 from core.connectors.base import Connector, ConnectorManifest, InvocationContext, ToolSpec
-from core.connectors.coder.builder import run_build
+from core.connectors.coder.builder import build_memory_line, run_build
 from core.logging import get_logger
 from core.worker.bridge import get_worker_bridge
 
 log = get_logger(__name__)
+
+# Builds are the most memorable thing Scrappy does for Karnveer — worth recalling
+# months later, so they're stored well above ordinary trivia.
+_BUILD_IMPORTANCE = 0.75
+
+
+async def _remember_build(goal: str, result: dict, ctx: InvocationContext) -> None:
+    """Record a finished build in long-term memory. Best-effort by design — a
+    memory-write failure must never turn a successful build into a failed one."""
+    if not (ctx.semantic and ctx.embedder and ctx.user_uuid):
+        return  # no memory wired (e.g. a bare CLI context) — nothing to do
+    line = build_memory_line(
+        goal, str(result.get("summary") or ""), result.get("open_target")
+    )
+    try:
+        embedding = await ctx.embedder.embed(line)
+        await ctx.semantic.write(
+            ctx.user_uuid,
+            "episodic",
+            line,
+            embedding,
+            source="coder.build",
+            importance=_BUILD_IMPORTANCE,
+        )
+        log.info("coder.build.remembered", line=line[:120])
+    except Exception as e:
+        log.warning("coder.build.remember_failed", err=str(e))
 
 _DEFAULT_TIMEOUT = 240
 _MIN_TIMEOUT = 30
@@ -104,6 +131,10 @@ class CoderConnector(Connector):
                 on_progress=ctx.emit_progress,
             )
             log.info("coder.build", ok=result.get("ok"), opened=result.get("opened"))
+            if result.get("ok"):
+                # Remember it, so "did you build me anything?" is answered from
+                # memory later instead of sending Claude Code hunting for files.
+                await _remember_build(str(args.get("goal", "")), result, ctx)
             return result
 
         if action != "code":
