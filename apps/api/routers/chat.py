@@ -80,6 +80,27 @@ def _classify_chat_error(exc: Exception, llm: LLMClient) -> dict:
     return payload
 
 
+def _silent_turn_fallback(tool_steps: list[dict], last_tool_summary: str) -> str:
+    """What to say when the model produced no text at all this turn.
+
+    Blank output reads as being ignored, which is worse than an imperfect answer.
+    If a tool ran we relay what it came back with; otherwise we ask for a retry.
+    """
+    summary = " ".join((last_tool_summary or "").split())
+    if tool_steps and summary:
+        failed = summary.startswith(("error:", "blocked:"))
+        tool = tool_steps[-1].get("tool", "that")
+        if failed:
+            return f"I tried {tool} and it didn't go through — {summary[:200]}"
+        return f"Here's what {tool} came back with: {summary[:200]}"
+    if tool_steps:
+        return (
+            f"I ran {tool_steps[-1].get('tool', 'a tool')} but got nothing useful back. "
+            "Want me to try a different angle?"
+        )
+    return "I didn't get that one out — say it again?"
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: UUID | None = None
@@ -174,6 +195,7 @@ async def chat(
 
         full: list[str] = []
         tool_steps: list[dict] = []  # this turn's tool calls → a workflow trace
+        last_tool_summary = ""  # rescues a turn that ends without any text
         t0 = time.perf_counter()
         prompt_tokens = None
         completion_tokens = None
@@ -252,6 +274,7 @@ async def chat(
                     tool_steps.append(
                         {"tool": ev.name, "ok": not ev.summary.startswith(("error:", "blocked:"))}
                     )
+                    last_tool_summary = ev.summary
                 elif isinstance(ev, Done):
                     prompt_tokens = ev.prompt_tokens
                     completion_tokens = ev.completion_tokens
@@ -263,6 +286,16 @@ async def chat(
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
         assistant_text = "".join(full).strip()
+
+        # A turn must never end in silence. Models sometimes emit a tool call and
+        # then no closing text at all, which reaches the user as a blank reply and
+        # looks like Scrappy ignored them. Say something honest instead — leaning
+        # on the last tool result when there is one.
+        if not assistant_text:
+            fallback = _silent_turn_fallback(tool_steps, last_tool_summary)
+            assistant_text = fallback
+            full.append(fallback)
+            yield {"event": "token", "data": fallback}
 
         # Embed + persist the assistant turn. Failures here must not break the response.
         try:
