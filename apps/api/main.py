@@ -16,6 +16,7 @@ from apps.api.routers import chat as chat_router
 from apps.api.routers import console as console_router
 from apps.api.routers import identity as identity_router
 from apps.api.routers import memory as memory_router
+from apps.api.routers import vault as vault_router
 from apps.api.routers import voice as voice_router
 from apps.api.routers import worker as worker_router
 from core.brain.llm import LLMClient
@@ -131,6 +132,7 @@ def create_app() -> FastAPI:
     app.include_router(agents_router.router)
     app.include_router(memory_router.router)
     app.include_router(worker_router.router)
+    app.include_router(vault_router.router)
 
     static_dir = Path(__file__).parent / "static"
     index_html = static_dir / "index.html"
