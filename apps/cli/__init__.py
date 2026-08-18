@@ -16,6 +16,8 @@ Usage:
   scrappy secret <name>        give Scrappy a third-party API key (value never shown to him)
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
   scrappy reindex              rebuild vector indexes for the memory you now have
+  scrappy vault export         write this Scrappy out as a portable bundle
+  scrappy vault import <dir>   load a Scrappy bundle into this host
   scrappy --consolidate        trigger nightly memory consolidation
   scrappy --new                clear session, start fresh
 
@@ -419,6 +421,95 @@ async def _reindex() -> None:
         print(f"  {_DIM}Searches scan that many clusters — the pgvector default of "
               f"1 would miss most of your memory.{_RESET}")
     print()
+
+
+async def _vault_post(
+    path: str, payload: dict, *, timeout: int = 300  # noqa: ASYNC109 - httpx's own timeout
+) -> dict | None:
+    """POST to a /v1/vault endpoint and return the JSON, or None after printing why."""
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                f"{API_BASE}{path}", json=payload, headers=headers, timeout=timeout
+            )
+            if r.status_code == 409:  # blocked: secret found, or version mismatch
+                print(f"\n{_RED}{r.json().get('detail', r.text)[:400]}{_RESET}")
+                return None
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError:
+        print(f"{_RED}Cannot connect to {API_BASE} — is the server running?{_RESET}")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            print(f"{_RED}401 Unauthorized — set VAULT_API_KEY{_RESET}")
+        else:
+            detail = e.response.text[:300]
+            print(f"{_RED}HTTP {e.response.status_code}: {detail}{_RESET}")
+    except Exception as e:
+        print(f"{_RED}Failed: {e}{_RESET}")
+    return None
+
+
+async def _vault_export(argv: list[str]) -> None:
+    """Write this Scrappy out as a portable bundle.
+
+    Everything that makes him *him* — persona, directives, memory, learned
+    patterns — in files another host or model can load. Carries no embeddings
+    (each host re-derives those) and no secrets (the export fails if it finds
+    one), which is what makes a bundle safe to move.
+    """
+    out = _flag_value(argv, "--out") or "~/.itsmay/vault"
+    include_episodes = "--no-episodes" not in argv
+
+    print(f"\n{_BOLD}Exporting vault{_RESET}  →  {out}")
+    data = await _vault_post(
+        "/v1/vault/export", {"out": out, "include_episodes": include_episodes}
+    )
+    if data is None:
+        return
+    print(f"  {_GREEN}✓{_RESET} {data.get('identity')} · vault {data.get('vault_id')}")
+    print(
+        f"  {_DIM}{data.get('memories', 0)} memories · "
+        f"{data.get('directives', 0)} directives · "
+        f"{data.get('episodes', 0)} episodes{_RESET}"
+    )
+    print(f"  {_DIM}protocol {data.get('protocol_version')} · "
+          f"written to {data.get('path')}{_RESET}")
+    print(f"\n  {_DIM}Load it elsewhere with:  "
+          f"scrappy vault import {data.get('path')}{_RESET}\n")
+
+
+async def _vault_import(path: str, dry_run: bool) -> None:
+    """Merge a bundle into this host, re-embedding every memory locally."""
+    label = "Previewing" if dry_run else "Importing"
+    print(f"\n{_BOLD}{label} vault{_RESET}  ←  {path}")
+    data = await _vault_post("/v1/vault/import", {"path": path, "dry_run": dry_run})
+    if data is None:
+        return
+    src = data.get("source") or {}
+    print(f"  {_DIM}from {src.get('identity', '?')} · exported by {src.get('exported_by', '?')}"
+          f" · protocol {src.get('protocol_version', '?')}{_RESET}")
+    added, skipped = data.get("memories_added", 0), data.get("memories_skipped", 0)
+    failed = data.get("memories_failed", 0)
+    print(f"  {_GREEN}✓{_RESET} {added} added, {skipped} already known"
+          + (f", {_RED}{failed} failed{_RESET}" if failed else ""))
+    if dry_run:
+        print(f"  {_YELLOW}dry run — nothing was written{_RESET}")
+    for conflict in data.get("conflicts") or []:
+        print(f"  {_YELLOW}! {conflict}{_RESET}")
+    print()
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    """Value following `flag`, or None. Keeps the CLI dependency-free."""
+    if flag in argv:
+        i = argv.index(flag)
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    return None
 
 
 def _load_knowledge_entries() -> list[dict] | None:
@@ -1332,6 +1423,19 @@ def main() -> None:
 
     if args and args[0] == "reindex":
         asyncio.run(_reindex())
+        return
+
+    if args and args[0] == "vault":
+        sub = args[1] if len(args) > 1 else ""
+        if sub == "export":
+            asyncio.run(_vault_export(args[2:]))
+        elif sub == "import":
+            if len(args) < 3:
+                print(f"{_RED}Usage: scrappy vault import <dir> [--dry-run]{_RESET}")
+                return
+            asyncio.run(_vault_import(args[2], "--dry-run" in args))
+        else:
+            print(f"{_RED}Usage: scrappy vault export|import{_RESET}")
         return
 
     if args and args[0] == "awaken":
