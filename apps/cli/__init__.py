@@ -16,6 +16,7 @@ Usage:
   scrappy secret <name>        give Scrappy a third-party API key (value never shown to him)
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
   scrappy reindex              rebuild vector indexes for the memory you now have
+  scrappy entity [--json]      run the entity acceptance suite (ENTITY_STATUS gate)
   scrappy vault export         write this Scrappy out as a portable bundle
   scrappy vault import <dir>   load a Scrappy bundle into this host
   scrappy --consolidate        trigger nightly memory consolidation
@@ -420,6 +421,63 @@ async def _reindex() -> None:
               f"{_DIM}in your env, then restart the server.{_RESET}")
         print(f"  {_DIM}Searches scan that many clusters — the pgvector default of "
               f"1 would miss most of your memory.{_RESET}")
+    print()
+
+
+def _entity(*, json_out: bool = False) -> None:
+    """Run the entity acceptance suite and print the scorecard.
+
+    Runs in-process against this checkout — it is a gate on the code, not a
+    question for the server. Every line carries its evidence, so a FAIL is a
+    specification for the next piece of work rather than a scolding.
+    """
+    import io
+
+    from core.entity import Verdict, run_acceptance
+
+    # The probes deliberately trip failure paths — a tool that explodes, a guard
+    # that rejects, the freeze switch — and each one logs, correctly. On top of a
+    # scorecard that is pure noise. structlog caches its bound loggers on first
+    # use, so re-configuring the level here would not reach them; capturing the
+    # streams for the duration is what actually works.
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        report = run_acceptance()
+
+    if json_out:
+        print(json.dumps(report.to_dict(), indent=2))
+        return
+
+    mark = {
+        Verdict.PASS: f"{_GREEN}[x]{_RESET}",
+        Verdict.PARTIAL: f"{_YELLOW}[~]{_RESET}",
+        Verdict.FAIL: f"{_DIM}[ ]{_RESET}",
+    }
+    print(f"\n{_BOLD}SCRAPPY ENTITY ACCEPTANCE TEST{_RESET}")
+    print(f"{_DIM}{'─' * 58}{_RESET}")
+    level = ""
+    for res in report.results:
+        if res.criterion.level != level:
+            level = res.criterion.level
+            print(f"\n{_DIM}{level}{_RESET}")
+        print(f"  {mark[res.finding.verdict]} {res.criterion.title}")
+        if res.finding.verdict is not Verdict.PASS:
+            for line in render.wrap(res.finding.evidence, 74, indent="        "):
+                print(f"{_DIM}{line}{_RESET}")
+
+    counts = report.counts
+    print(f"\n{_DIM}{'─' * 58}{_RESET}")
+    print(
+        f"  {_GREEN}{counts['PASS']} pass{_RESET}  "
+        f"{_YELLOW}{counts['PARTIAL']} partial{_RESET}  "
+        f"{_DIM}{counts['FAIL']} fail{_RESET}   ·   reached {_BOLD}{report.level()}{_RESET}"
+    )
+    status = report.entity_status
+    colour = _GREEN if status else _RED
+    print(f"\n  {colour}{_BOLD}ENTITY_STATUS = {str(status).upper()}{_RESET}")
+    if not status:
+        print(f"  {_DIM}Every criterion must pass. Each FAIL above is the spec "
+              f"for the next build.{_RESET}")
     print()
 
 
@@ -1423,6 +1481,10 @@ def main() -> None:
 
     if args and args[0] == "reindex":
         asyncio.run(_reindex())
+        return
+
+    if args and args[0] == "entity":
+        _entity(json_out="--json" in args)
         return
 
     if args and args[0] == "vault":
