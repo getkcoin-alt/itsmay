@@ -16,6 +16,8 @@ from apps.api.routers import chat as chat_router
 from apps.api.routers import console as console_router
 from apps.api.routers import identity as identity_router
 from apps.api.routers import memory as memory_router
+from apps.api.routers import mini as mini_router
+from apps.api.routers import settings as settings_router
 from apps.api.routers import vault as vault_router
 from apps.api.routers import voice as voice_router
 from apps.api.routers import worker as worker_router
@@ -58,6 +60,15 @@ async def lifespan(app: FastAPI):
     app.state.embedder = Embedder()
     app.state.tts = ElevenLabsTTS()
     app.state.stt = WhisperSTT()
+
+    # Mini AI companion engine (fully local: Ollama + SQLite).
+    try:
+        from core.companion.runtime import build_engine
+        app.state.companion = build_engine()
+        log.info("companion.ready", model=get_settings().companion_model)
+    except Exception as e:
+        log.warning("companion.init_failed", error=str(e))
+        app.state.companion = None
 
     yield
 
@@ -131,6 +142,8 @@ def create_app() -> FastAPI:
     app.include_router(browser_router.router)
     app.include_router(agents_router.router)
     app.include_router(memory_router.router)
+    app.include_router(mini_router.router)
+    app.include_router(settings_router.router)
     app.include_router(worker_router.router)
     app.include_router(vault_router.router)
 

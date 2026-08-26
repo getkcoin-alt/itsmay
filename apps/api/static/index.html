@@ -24,7 +24,7 @@
 
   <title>Scrappy · Vault Zeta</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=6" />
 </head>
 <body>
 
@@ -44,6 +44,12 @@
           <path d="M14 10.5a1 1 0 0 1-1 1H5l-3 3V2a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1z"/>
         </svg>
         <span>Chat</span>
+      </button>
+      <button class="nav-item" data-tab="mini">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 14s-5.5-3.5-5.5-7.5C2.5 3.5 5 1.5 8 4c3-2.5 5.5-.5 5.5 2.5S8 14 8 14z"/>
+        </svg>
+        <span>Mini AI</span>
       </button>
       <button class="nav-item" data-tab="memory">
         <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -74,6 +80,15 @@
           <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.22 3.22l1.41 1.41M11.37 11.37l1.41 1.41M3.22 12.78l1.41-1.41M11.37 4.63l1.41-1.41"/>
         </svg>
         <span>System</span>
+      </button>
+      <button class="nav-item" data-tab="models">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="2" y="2" width="5" height="5" rx="1"/>
+          <rect x="9" y="2" width="5" height="5" rx="1"/>
+          <rect x="2" y="9" width="5" height="5" rx="1"/>
+          <rect x="9" y="9" width="5" height="5" rx="1"/>
+        </svg>
+        <span>Models</span>
       </button>
       <button class="nav-item" data-tab="guide">
         <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -145,6 +160,63 @@
           </button>
         </form>
         <div class="composer-hint">Enter to send · Shift+Enter for newline</div>
+      </div>
+    </section>
+
+    <!-- Mini AI ────────────────────────────────────────────────── -->
+    <section id="panel-mini" class="panel">
+      <div class="panel-header mini-header">
+        <div class="mini-brand">
+          <span class="mini-avatar">💛</span>
+          <span class="panel-title">Mini AI</span>
+          <span id="mini-persona-badge" class="mini-persona-badge">Friend</span>
+        </div>
+        <div class="mini-header-actions">
+          <div class="mini-persona-toggle">
+            <button id="mini-persona-friend" class="persona-btn active" data-persona="friend">Friend</button>
+            <button id="mini-persona-mentor" class="persona-btn" data-persona="mentor">Mentor</button>
+          </div>
+          <button id="mini-memories-btn" class="btn-ghost sm">Memories</button>
+        </div>
+      </div>
+      <div class="mini-voice-container">
+        <div id="mini-avatar-container" class="mini-avatar-container">
+          <div class="mini-voice-avatar">💛</div>
+        </div>
+        <div id="mini-voice-status" class="mini-voice-status">Hold spacebar or button to talk</div>
+        <div id="mini-voice-subtitle" class="mini-voice-subtitle" hidden>Listening...</div>
+        <button id="mini-ptt-btn" class="mini-ptt-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="chat-composer">
+        <form id="mini-text-form" class="chat-form">
+          <textarea id="mini-text-input" rows="1" placeholder="Or type a message to Mini..."></textarea>
+          <button type="submit" class="send-btn" title="Send (Enter)">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 12V4M4 8l4-4 4 4"/>
+            </svg>
+          </button>
+        </form>
+      </div>
+
+      <!-- Memories slide-out -->
+      <div id="mini-memories-panel" class="mini-memories-panel" hidden>
+        <div class="mini-memories-header">
+          <span class="mini-memories-title">What I remember about you</span>
+          <button id="mini-memories-close" class="icon-btn" aria-label="Close">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M2 2l12 12M14 2L2 14"/></svg>
+          </button>
+        </div>
+        <div id="mini-memories-list" class="mini-memories-list">
+          <div class="mini-memories-empty">No memories yet — start chatting and I'll remember the important stuff.</div>
+        </div>
       </div>
     </section>
 
@@ -268,6 +340,83 @@
       </div>
     </section>
 
+    <!-- Models ─────────────────────────────────────────────────── -->
+    <section id="panel-models" class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Models</span>
+        <button id="models-refresh" class="btn-ghost sm">Refresh</button>
+      </div>
+      <div class="panel-body models-body">
+        <!-- Active config -->
+        <div class="models-section">
+          <div class="section-label">Active Configuration</div>
+          <div class="models-active-grid">
+            <div class="model-active-card">
+              <div class="model-active-label">Scrappy (Chat)</div>
+              <div id="models-scrappy-info" class="model-active-info">Loading…</div>
+            </div>
+            <div class="model-active-card mini-accent">
+              <div class="model-active-label">Mini AI (Companion)</div>
+              <div id="models-mini-info" class="model-active-info">Loading…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- API Providers -->
+        <div class="models-section">
+          <div class="section-label">API Providers</div>
+          <div class="models-providers-grid">
+            <div class="provider-card" data-provider="groq">
+              <div class="provider-header">
+                <span class="provider-dot groq"></span>
+                <span class="provider-name">Groq</span>
+                <span id="provider-groq-status" class="provider-status">—</span>
+              </div>
+              <input id="provider-groq-key" type="password" placeholder="gsk_…" class="text-field sm" />
+              <input id="provider-groq-model" type="text" placeholder="Model (e.g. llama-3.3-70b-versatile)" class="text-field sm" />
+              <div class="provider-actions">
+                <button class="btn-ghost sm" onclick="testProvider('groq')">Test</button>
+                <button class="provider-activate-btn" onclick="activateProvider('groq')">Activate</button>
+              </div>
+            </div>
+            <div class="provider-card" data-provider="openrouter">
+              <div class="provider-header">
+                <span class="provider-dot openrouter"></span>
+                <span class="provider-name">OpenRouter</span>
+                <span id="provider-openrouter-status" class="provider-status">—</span>
+              </div>
+              <input id="provider-openrouter-key" type="password" placeholder="sk-or-…" class="text-field sm" />
+              <input id="provider-openrouter-model" type="text" placeholder="Model (e.g. meta-llama/llama-3-70b)" class="text-field sm" />
+              <div class="provider-actions">
+                <button class="btn-ghost sm" onclick="testProvider('openrouter')">Test</button>
+                <button class="provider-activate-btn" onclick="activateProvider('openrouter')">Activate</button>
+              </div>
+            </div>
+            <div class="provider-card" data-provider="openai">
+              <div class="provider-header">
+                <span class="provider-dot openai"></span>
+                <span class="provider-name">OpenAI</span>
+                <span id="provider-openai-status" class="provider-status">—</span>
+              </div>
+              <input id="provider-openai-key" type="password" placeholder="sk-…" class="text-field sm" />
+              <input id="provider-openai-model" type="text" placeholder="Model (e.g. gpt-4o)" class="text-field sm" />
+              <div class="provider-actions">
+                <button class="btn-ghost sm" onclick="testProvider('openai')">Test</button>
+                <button class="provider-activate-btn" onclick="activateProvider('openai')">Activate</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Local Ollama Models -->
+        <div class="models-section">
+          <div class="section-label">Local Models (Ollama)</div>
+          <div id="ollama-status" class="ollama-status">Checking…</div>
+          <div id="ollama-models-list" class="ollama-models-list"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Guide ──────────────────────────────────────────────────── -->
     <section id="panel-guide" class="panel guide-panel">
       <div class="panel-header">
@@ -317,6 +466,10 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 10.5a1 1 0 0 1-1 1H5l-3 3V2a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1z"/></svg>
       <span>Chat</span>
     </button>
+    <button class="mnav-item" data-tab="mini">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 14s-5.5-3.5-5.5-7.5C2.5 3.5 5 1.5 8 4c3-2.5 5.5-.5 5.5 2.5S8 14 8 14z"/></svg>
+      <span>Mini</span>
+    </button>
     <button class="mnav-item" data-tab="memory">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="8" cy="5" rx="6" ry="3.5"/><path d="M2 5v3c0 1.93 2.69 3.5 6 3.5s6-1.57 6-3.5V5"/><path d="M2 8v3c0 1.93 2.69 3.5 6 3.5s6-1.57 6-3.5V8"/></svg>
       <span>Memory</span>
@@ -325,9 +478,9 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M4 7h2M4 9.5h5"/></svg>
       <span>Agents</span>
     </button>
-    <button class="mnav-item" data-tab="system">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/></svg>
-      <span>System</span>
+    <button class="mnav-item" data-tab="models">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+      <span>Models</span>
     </button>
   </nav>
 
@@ -352,6 +505,6 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=6"></script>
 </body>
 </html>

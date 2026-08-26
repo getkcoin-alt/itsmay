@@ -166,7 +166,7 @@ function wireCopyButtons(container) {
 }
 
 // ── tabs / navigation ─────────────────────────────────────────────
-const loaded = { memory: false, system: false, watch: false, agents: false };
+const loaded = { memory: false, system: false, watch: false, agents: false, mini: false, models: false };
 
 function switchTab(name) {
   document.querySelectorAll(".nav-item[data-tab]").forEach((t) =>
@@ -178,6 +178,8 @@ function switchTab(name) {
 
   if (name === "memory" && !loaded.memory) { loadMemory(); loaded.memory = true; }
   if (name === "system" && !loaded.system) { loadSystem(); loaded.system = true; }
+  if (name === "mini" && !loaded.mini) { loadMini(); loaded.mini = true; }
+  if (name === "models" && !loaded.models) { loadModels(); loaded.models = true; }
   if (name === "watch")  { loadWatch(); }
   if (name === "agents") { clearAgentsTimer(); loadAgents(); }
   if (name !== "agents") { clearAgentsTimer(); }
@@ -240,9 +242,13 @@ function parseSSE(block) {
   let event = "message";
   const dataLines = [];
   for (const line of block.split("\n")) {
-    if (line.startsWith(":")) continue;
-    if (line.startsWith("event:")) event = line.slice(6).trim();
-    else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
+    const cleaned = line.replace(/\r$/, "");
+    if (cleaned.trimStart().startsWith(":")) continue;
+    if (cleaned.trimStart().startsWith("event:")) {
+      event = cleaned.trimStart().slice(6).trim();
+    } else if (cleaned.trimStart().startsWith("data:")) {
+      dataLines.push(cleaned.trimStart().slice(5).replace(/^ /, ""));
+    }
   }
   return { event, data: dataLines.join("\n") };
 }
@@ -277,10 +283,25 @@ async function sendChat(message) {
       const { value, done } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
+      
+      while (true) {
+        let lfIdx = buf.indexOf("\n\n");
+        let crlfIdx = buf.indexOf("\r\n\r\n");
+        let idx = -1;
+        let sepLen = 2;
+        
+        if (crlfIdx >= 0 && (lfIdx < 0 || crlfIdx < lfIdx)) {
+          idx = crlfIdx;
+          sepLen = 4;
+        } else {
+          idx = lfIdx;
+          sepLen = 2;
+        }
+        
+        if (idx < 0) break;
+        
         const block = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
+        buf = buf.slice(idx + sepLen);
         const { event, data } = parseSSE(block);
 
         if (event === "token") {
@@ -868,3 +889,543 @@ $("#key-clear").addEventListener("click", () => {
 // ── boot ──────────────────────────────────────────────────────────
 loadIdentity();
 chatInput.focus();
+
+
+// ── Mini AI Voice Interface ────────────────────────────────────────
+
+const miniVoiceStatus = $("#mini-voice-status");
+const miniVoiceSubtitle = $("#mini-voice-subtitle");
+const miniAvatarContainer = $("#mini-avatar-container");
+const miniPttBtn = $("#mini-ptt-btn");
+let currentPersona = "friend";
+
+// Audio Queue Manager for sequential playback
+// Shared audio element to bypass autoplay restrictions
+const sharedAudio = new Audio();
+
+// Audio Queue Manager for sequential playback
+class AudioQueue {
+  constructor() {
+    this.queue = [];
+    this.isPlaying = false;
+  }
+
+  push(sentence) {
+    if (!sentence.trim()) return;
+    this.queue.push(sentence);
+    this.playNext();
+  }
+
+  async playNext() {
+    if (this.isPlaying || this.queue.length === 0) return;
+    this.isPlaying = true;
+    const text = this.queue.shift();
+    
+    // Show what is being spoken
+    miniVoiceSubtitle.textContent = text;
+    miniVoiceSubtitle.hidden = false;
+    miniAvatarContainer.classList.add("speaking");
+    miniVoiceStatus.textContent = "Mini is speaking...";
+
+    try {
+      const token = getKey();
+      const params = new URLSearchParams({ text });
+      if (token) params.set("_token", token);
+      
+      sharedAudio.src = `/v1/voice/speak?${params.toString()}`;
+      
+      sharedAudio.onended = () => {
+        miniAvatarContainer.classList.remove("speaking");
+        this.isPlaying = false;
+        if (this.queue.length === 0) {
+          miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+          miniVoiceSubtitle.hidden = true;
+        } else {
+          this.playNext();
+        }
+      };
+      
+      sharedAudio.onerror = () => {
+        console.error("Audio playback error");
+        miniAvatarContainer.classList.remove("speaking");
+        this.isPlaying = false;
+        this.playNext();
+      };
+
+      await sharedAudio.play();
+    } catch (e) {
+      console.error("TTS fetch failed", e);
+      miniAvatarContainer.classList.remove("speaking");
+      this.isPlaying = false;
+      this.playNext();
+    }
+  }
+
+  stop() {
+    this.queue = [];
+    sharedAudio.pause();
+    this.isPlaying = false;
+    miniAvatarContainer.classList.remove("speaking");
+    miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+    miniVoiceSubtitle.hidden = true;
+  }
+}
+
+const ttsQueue = new AudioQueue();
+
+async function loadMini() {
+  try {
+    const p = await apiJson("/v1/mini/profile");
+    currentPersona = p.persona;
+    updateMiniPersonaUI(p.persona, p.persona_title);
+  } catch (e) {
+    console.error("Failed to load Mini profile:", e);
+  }
+}
+
+function updateMiniPersonaUI(persona, title) {
+  currentPersona = persona;
+  $("#mini-persona-badge").textContent = title;
+  
+  document.querySelectorAll(".persona-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.persona === persona);
+  });
+
+  const panel = $("#panel-mini");
+  panel.className = "panel active " + (persona === "mentor" ? "mentor-theme" : "");
+}
+
+document.querySelectorAll(".persona-btn").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const persona = btn.dataset.persona;
+    if (persona === currentPersona) return;
+    try {
+      const p = await apiJson("/v1/mini/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persona }),
+      });
+      updateMiniPersonaUI(p.persona, p.persona_title);
+      toast(`Switched to ${p.persona_title} persona.`);
+    } catch (e) {
+      toast("Failed to switch persona: " + e.message, true);
+    }
+  });
+});
+
+// Microphone and Voice Loop
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+async function startRecording() {
+  if (isRecording) return;
+  
+  // Unlock audio playback on first interaction
+  sharedAudio.play().catch(() => {});
+  
+  // Stop current playback if interrupting
+  ttsQueue.stop();
+  
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) audioChunks.push(event.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(track => track.stop());
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' }); // Chrome often uses webm for audio
+      await handleAudioSubmission(audioBlob);
+    };
+
+    mediaRecorder.start();
+    isRecording = true;
+    miniPttBtn.classList.add("active");
+    miniVoiceStatus.textContent = "Listening...";
+    miniVoiceSubtitle.hidden = true;
+  } catch (e) {
+    console.error("Microphone access denied or error:", e);
+    toast("Microphone access denied. Please allow microphone permissions.", true);
+  }
+}
+
+function stopRecording() {
+  if (!isRecording || !mediaRecorder) return;
+  isRecording = false;
+  miniPttBtn.classList.remove("active");
+  mediaRecorder.stop();
+  miniVoiceStatus.textContent = "Processing...";
+}
+
+// Push to talk event listeners
+miniPttBtn.addEventListener("mousedown", startRecording);
+miniPttBtn.addEventListener("mouseup", stopRecording);
+miniPttBtn.addEventListener("mouseleave", stopRecording);
+miniPttBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startRecording(); });
+miniPttBtn.addEventListener("touchend", (e) => { e.preventDefault(); stopRecording(); });
+miniPttBtn.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRecording(); });
+
+// Also allow spacebar when Mini panel is active
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && !e.repeat && $("#panel-mini").classList.contains("active") && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+    e.preventDefault();
+    startRecording();
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  if (e.code === "Space" && $("#panel-mini").classList.contains("active") && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+    e.preventDefault();
+    stopRecording();
+  }
+});
+
+async function handleAudioSubmission(blob) {
+  miniVoiceStatus.textContent = "Thinking...";
+  
+  try {
+    // 1. Transcribe
+    const formData = new FormData();
+    // Use .webm or .wav depending on what the browser generated. Whisper handles both.
+    formData.append("audio", blob, "voice.webm");
+    
+    const token = getKey();
+    const sttRes = await fetch("/v1/voice/transcribe", {
+      method: "POST",
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: formData
+    });
+    
+    if (!sttRes.ok) {
+      const errText = await sttRes.text().catch(() => "");
+      throw new Error(`STT failed (${sttRes.status}): ${errText}`);
+    }
+    const sttData = await sttRes.json();
+    const transcript = sttData.text.trim();
+    
+    if (!transcript) {
+      miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+      return;
+    }
+
+    await sendToMiniAI(transcript);
+  } catch (e) {
+    console.error("Voice loop error:", e);
+    toast("Voice error: " + e.message, true);
+    miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+  }
+}
+
+async function sendToMiniAI(transcript) {
+  miniVoiceSubtitle.textContent = `You: "${transcript}"`;
+  miniVoiceSubtitle.hidden = false;
+  miniVoiceStatus.textContent = "Thinking...";
+  
+  try {
+    // Stop any ongoing audio before starting new conversation
+    ttsQueue.stop();
+    
+    // 2. Send to Mini Chat LLM via SSE
+    const chatRes = await api("/v1/mini/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: transcript, persona: currentPersona }),
+    });
+
+    const reader = chatRes.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let sentenceBuffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      while (true) {
+        let lfIdx = buf.indexOf("\n\n");
+        let crlfIdx = buf.indexOf("\r\n\r\n");
+        let idx = -1;
+        let sepLen = 2;
+
+        if (crlfIdx >= 0 && (lfIdx < 0 || crlfIdx < lfIdx)) {
+          idx = crlfIdx;
+          sepLen = 4;
+        } else {
+          idx = lfIdx;
+          sepLen = 2;
+        }
+
+        if (idx < 0) break;
+
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + sepLen);
+        const { event, data } = parseSSE(block);
+
+        if (event === "token") {
+          sentenceBuffer += data;
+          // Simple sentence boundary detection
+          if (/[.!?]\s/.test(sentenceBuffer) || /[.!?]$/.test(data)) {
+             const sentence = sentenceBuffer.trim();
+             if (sentence) {
+               ttsQueue.push(sentence);
+             }
+             sentenceBuffer = "";
+          }
+        }
+      }
+    }
+    
+    // Push any remaining text
+    if (sentenceBuffer.trim()) {
+      ttsQueue.push(sentenceBuffer.trim());
+    }
+    
+  } catch (e) {
+    console.error("Mini Chat error:", e);
+    toast("Mini AI error: " + e.message, true);
+    miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+  }
+}
+
+// Text fallback submission for Mini AI
+$("#mini-text-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("#mini-text-input");
+  const text = input.value.trim();
+  if (!text) return;
+  
+  input.value = "";
+  
+  // Unlock audio context on form submit
+  sharedAudio.play().catch(() => {});
+  
+  await sendToMiniAI(text);
+});
+
+// Shift+Enter for newline in Mini Text input
+$("#mini-text-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    $("#mini-text-form").dispatchEvent(new Event("submit"));
+  }
+});
+// Memories panel (keep as before)
+$("#mini-memories-btn").addEventListener("click", async () => {
+  const panel = $("#mini-memories-panel");
+  const list = $("#mini-memories-list");
+  panel.hidden = false;
+  list.innerHTML = `<div class="mini-memories-empty">Loading memories…</div>`;
+  
+  try {
+    const data = await apiJson("/v1/mini/memories");
+    list.innerHTML = "";
+    if (data.memories && data.memories.length > 0) {
+      data.memories.forEach((m) => {
+        const card = el("div", "mini-memory-card");
+        card.textContent = m.content;
+        list.appendChild(card);
+      });
+    } else {
+      list.innerHTML = `<div class="mini-memories-empty">No memories yet — start chatting and I'll remember the important stuff.</div>`;
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="mini-memories-empty bad">Failed to load: ${e.message}</div>`;
+  }
+});
+
+$("#mini-memories-close").addEventListener("click", () => {
+  $("#mini-memories-panel").hidden = true;
+});
+
+
+
+// ── Model Settings ────────────────────────────────────────────────
+async function loadModels() {
+  const scrappyInfo = $("#models-scrappy-info");
+  const miniInfo = $("#models-mini-info");
+  const ollamaStatus = $("#ollama-status");
+  const ollamaList = $("#ollama-models-list");
+
+  scrappyInfo.textContent = "Loading…";
+  miniInfo.textContent = "Loading…";
+  ollamaStatus.textContent = "Loading…";
+  ollamaList.innerHTML = "";
+
+  try {
+    // 1. Get current configs
+    const data = await apiJson("/v1/settings/models");
+    
+    scrappyInfo.textContent = `${data.scrappy.provider.toUpperCase()} (${data.scrappy.model})`;
+    miniInfo.textContent = `${data.mini.provider.toUpperCase()} (${data.mini.model})`;
+
+    // Highlight active provider card
+    document.querySelectorAll(".provider-card").forEach((card) => {
+      card.classList.toggle("active", card.dataset.provider === data.scrappy.provider);
+      // Pre-fill model name
+      if (card.dataset.provider === data.scrappy.provider) {
+        card.querySelector("input[type='text']").value = data.scrappy.model;
+      }
+    });
+
+    // 2. Get local Ollama models
+    const local = await apiJson("/v1/settings/ollama/models");
+    if (local.available) {
+      ollamaStatus.textContent = `Ollama is running at ${data.ollama.host}`;
+      ollamaList.innerHTML = "";
+      if (local.models && local.models.length > 0) {
+        local.models.forEach((m) => {
+          const card = el("div", "ollama-model-card");
+          
+          const name = el("div", "ollama-model-name", m.name);
+          card.appendChild(name);
+          
+          const meta = el("div", "ollama-model-meta");
+          meta.appendChild(el("span", "", m.size_human));
+          if (m.parameter_size) meta.appendChild(el("span", "dim", m.parameter_size));
+          if (m.quantization) meta.appendChild(el("span", "dim", m.quantization));
+          card.appendChild(meta);
+
+          const actions = el("div", "ollama-model-actions");
+          
+          const btnUseChat = el("button", "sm", "Use for Chat");
+          btnUseChat.addEventListener("click", () => useOllamaModel(m.name, "chat"));
+          actions.appendChild(btnUseChat);
+          
+          const btnUseMini = el("button", "sm", "Use for Mini");
+          btnUseMini.addEventListener("click", () => useOllamaModel(m.name, "mini"));
+          actions.appendChild(btnUseMini);
+          
+          card.appendChild(actions);
+          ollamaList.appendChild(card);
+        });
+      } else {
+        ollamaList.innerHTML = `<div class="ollama-status">No models installed. Run "ollama pull <model>" in terminal.</div>`;
+      }
+    } else {
+      ollamaStatus.textContent = `Ollama is unreachable (${local.error || "offline"})`;
+      ollamaList.innerHTML = `<div class="ollama-status dim">Ollama is offline. Start the Ollama app to use local models.</div>`;
+    }
+  } catch (e) {
+    toast("Failed to load model settings: " + e.message, true);
+  }
+}
+
+// Test Provider
+async function testProvider(provider) {
+  const card = document.querySelector(`.provider-card[data-provider='${provider}']`);
+  const keyInput = card.querySelector("input[type='password']");
+  const modelInput = card.querySelector("input[type='text']");
+  const statusLabel = card.querySelector(".provider-status");
+
+  const key = keyInput.value.trim();
+  const model = modelInput.value.trim();
+  
+  let base_url = "";
+  if (provider === "groq") base_url = "https://api.groq.com/openai/v1";
+  if (provider === "openrouter") base_url = "https://openrouter.ai/api/v1";
+  if (provider === "openai") base_url = "https://api.openai.com/v1";
+
+  statusLabel.textContent = "testing…";
+  
+  try {
+    const res = await apiJson("/v1/settings/test-provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "openai", base_url, api_key: key, model }),
+    });
+
+    if (res.ok) {
+      statusLabel.textContent = "success (200)";
+      toast(`Connection to ${provider.toUpperCase()} verified!`);
+    } else {
+      statusLabel.textContent = `error (${res.status || "fail"})`;
+      toast(`Connection test failed: ${res.error}`, true);
+    }
+  } catch (e) {
+    statusLabel.textContent = "error";
+    toast("Test failed: " + e.message, true);
+  }
+}
+
+// Activate Provider
+async function activateProvider(provider) {
+  const card = document.querySelector(`.provider-card[data-provider='${provider}']`);
+  const keyInput = card.querySelector("input[type='password']");
+  const modelInput = card.querySelector("input[type='text']");
+
+  const key = keyInput.value.trim();
+  const model = modelInput.value.trim();
+  
+  if (!model) {
+    toast("Please specify a model name first.", true);
+    return;
+  }
+
+  let base_url = "";
+  if (provider === "groq") base_url = "https://api.groq.com/openai/v1";
+  if (provider === "openrouter") base_url = "https://openrouter.ai/api/v1";
+  if (provider === "openai") base_url = "https://api.openai.com/v1";
+
+  try {
+    const res = await apiJson("/v1/settings/models", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "openai",
+        base_url,
+        api_key: key || undefined,
+        model,
+      }),
+    });
+
+    toast("Configuration saved! Restart server to apply.");
+    loadModels();
+  } catch (e) {
+    toast("Failed to save: " + e.message, true);
+  }
+}
+
+// Use local Ollama model
+async function useOllamaModel(modelName, target) {
+  try {
+    if (target === "chat") {
+      await apiJson("/v1/settings/models", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "ollama",
+          model: modelName,
+        }),
+      });
+      toast("Scrappy chat switched to Ollama model! Restart server to apply.");
+    } else {
+      // For Mini AI companion
+      await apiJson("/v1/settings/models", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companion_provider: "ollama",
+          companion_model: modelName,
+        }),
+      });
+      toast("Mini AI companion switched to local Ollama model! Restart server to apply.");
+    }
+    loadModels();
+  } catch (e) {
+    toast("Failed to switch model: " + e.message, true);
+  }
+}
+
+// Make functions globally accessible for HTML onclick handlers
+window.testProvider = testProvider;
+window.activateProvider = activateProvider;
+
+$("#models-refresh").addEventListener("click", () => {
+  loadModels();
+});
+

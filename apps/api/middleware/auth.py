@@ -103,10 +103,15 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         auth = request.headers.get("authorization", "")
-        if not auth.lower().startswith("bearer "):
+        presented = ""
+        if auth.lower().startswith("bearer "):
+            presented = auth.split(" ", 1)[1].strip()
+        else:
+            presented = request.query_params.get("_token", "")
+            
+        if not presented:
             return JSONResponse({"error": "missing bearer token"}, status_code=401)
 
-        presented = auth.split(" ", 1)[1].strip()
         if not hmac.compare_digest(presented, self._token):
             return JSONResponse({"error": "invalid token"}, status_code=401)
 

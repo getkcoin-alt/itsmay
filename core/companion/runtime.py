@@ -237,8 +237,8 @@ class CompanionEngine:
 
 
 def build_engine(*, path: str | None = None) -> CompanionEngine:
-    """Wire a fully-local engine from settings (Ollama LLM, local embedder, SQLite
-    profiles+memory). Device-only — tests construct CompanionEngine with fakes."""
+    """Wire a companion engine from settings (Ollama or Cloud LLM, local embedder, SQLite
+    profiles+memory)."""
     from core.brain.llm import LLMClient
     from core.config import get_settings
     from core.memory.embedder import Embedder
@@ -246,12 +246,29 @@ def build_engine(*, path: str | None = None) -> CompanionEngine:
 
     s = get_settings()
     resolved = ensure_profile_schema(path or s.companion_sqlite_path)
+
+    # Determine LLM configuration
+    provider = s.companion_provider
+    
+    if provider == "ollama":
+        base_url = s.companion_base_url or s.ollama_host
+        api_key = s.companion_api_key or None
+        model = s.companion_model
+    else:
+        # Cloud/OpenAI-compatible (e.g., Groq, OpenRouter)
+        base_url = s.companion_base_url or s.llm_base_url
+        api_key = s.companion_api_key or s.llm_api_key
+        # If using cloud, default companion_model to llama-3.1-8b-instant if not overridden
+        model = s.companion_model
+        if model == "llama3.2:3b":  # The default local model name
+            model = s.llm_agent_model or "llama-3.1-8b-instant"
+
     return CompanionEngine(
         profiles=ProfileStore(resolved),
         semantic=SqliteSemanticStore(resolved),
         episodic=SqliteEpisodicStore(resolved),
         embedder=Embedder(),
-        llm=LLMClient(provider="ollama", base_url=s.ollama_host, model=s.companion_model),
+        llm=LLMClient(provider=provider, base_url=base_url, api_key=api_key, model=model),
         identifier=SpeakerIdentifier(),
         active_window_s=s.companion_active_window_s,
     )

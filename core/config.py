@@ -62,12 +62,11 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
-    llm_model: str = "llama-3.3-70b-versatile"
+    llm_model: str = "groq/compound"
     # Sub-agents (terminal agents) run on a cheaper, faster model with its OWN
     # daily-token budget, so their many iterations don't drain the main model's
-    # quota. Groq's 8b-instant is plenty for running bash and reading output;
-    # heavy coding is delegated to Claude Code, not this model.
-    llm_agent_model: str = "llama-3.1-8b-instant"
+    # quota.
+    llm_agent_model: str = "groq/compound-mini"
     # Route tool-using experts (memory/email/researcher) to `llm_agent_model` too:
     # their work is mechanical tool-calling that the cheap 8b handles fine, so we
     # don't spend 70b tokens on it. Reasoning-critical experts opt out via
@@ -127,6 +126,9 @@ class Settings(BaseSettings):
     say_rate: int = 0
 
     # ── Mini AI companion (fully local, per-device) ───────────────
+    companion_provider: str = "ollama"            # "ollama" or "openai" (for Groq, OpenRouter, etc.)
+    companion_base_url: str = ""                  # if empty, falls back to ollama_host or llm_base_url
+    companion_api_key: str = ""                   # if empty, falls back to llm_api_key
     companion_model: str = "llama3.2:3b"          # Ollama instruct model for the friend
     companion_persona: str = "friend"             # default personality: "friend" | "mentor"
     # Voice: "auto" (Piper→say), "say", "piper", or "elevenlabs" (cloud, expressive,
@@ -136,6 +138,18 @@ class Settings(BaseSettings):
     speaker_match_threshold: float = 0.65         # cosine ≥ this → same speaker (voiceprint)
     companion_active_window_s: float = 30.0       # how long a chat stays "live" for follow-ups
     companion_observe: bool = True                # listen + remember silently when not addressed
+    # Dedicated-device ("gift") mode: this deployment belongs to ONE person.
+    mini_owner_name: str = ""                     # e.g. "Khushi" — Mini knows who it's talking to
+    mini_only: bool = False                       # frontend shows only the Mini AI tab
+    mini_owner_pin: str = ""                      # the legacy owner's per-tenant PIN (see tenants.py);
+                                                   # kept separate from vault_api_key even if equal today
+
+    # ── Multi-tenant onboarding (unique URL + PIN per person) ──────
+    # A tiny registry mapping URL slug -> {pin, owner_name, own sqlite db}, so
+    # one shared deployment can host many independent "gift" Minis. See
+    # core/companion/tenants.py.
+    tenants_db_path: str = "~/.itsmay/tenants.db"
+    tenants_data_dir: str = "~/.itsmay/tenants"   # each tenant's own mini.db lives here
 
     # ── Identity / mission ────────────────────────────────────────
     user_handle: str = "karnveer"
