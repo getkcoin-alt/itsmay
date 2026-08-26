@@ -70,11 +70,15 @@ async def transcribe(
     stt: WhisperSTT = Depends(get_stt),
 ) -> dict:
     data = await audio.read()
-    if not data:
-        raise HTTPException(400, "empty audio payload")
+    if not data or len(data) < 200:
+        return {"text": "", "language": "en", "language_probability": 0.0, "duration": 0.0, "segments": []}
     suffix = Path(audio.filename or "audio.wav").suffix or ".wav"
     try:
         return await stt.transcribe(data, suffix=suffix, language=language)
+    except httpx.HTTPStatusError as e:
+        if e.response is not None and e.response.status_code == 400:
+            return {"text": "", "language": "en", "language_probability": 0.0, "duration": 0.0, "segments": []}
+        raise HTTPException(500, f"transcription failed: {e}") from e
     except Exception as e:
         raise HTTPException(500, f"transcription failed: {e}") from e
 
