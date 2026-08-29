@@ -1,9 +1,14 @@
 """Read-only SYNCBOND bridge from Vault Zeta to Scrappy OS.
 
-Phase 1 deliberately exposes only READ-risk objectives. Vault can ask the
-machine control plane to observe/inspect reality, but this connector cannot
-submit WRITE, PRIVILEGED or DESTRUCTIVE objectives. Those remain a later,
-separately-approved capability.
+Phase 1 deliberately exposes only READ-risk machine objectives. Vault can ask
+the machine control plane to observe/inspect reality, but this connector cannot
+submit WRITE, PRIVILEGED or DESTRUCTIVE objectives.
+
+The connector also exposes one approval-gated continuity write:
+``record_terminal_experience`` fetches a terminal task result, verifies that
+Scrappy OS echoed the originating correlation id, deterministically distills
+structured evidence, and stores one idempotent Vault Experience. It never treats
+model prose as proof that an action succeeded.
 
 Configuration:
     SCRAPPY_OS_BASE_URL=http://127.0.0.1:8787
@@ -13,8 +18,8 @@ The token should belong to a dedicated Vault service principal with only:
     task:create, task:read, system:read
 
 Scrappy OS remains the authority for actor identity, policy, execution,
-approvals and audit. Vault only submits an objective and records the mapping
-between its SYNCBOND correlation id and Scrappy OS's objective id.
+approvals and audit. Vault stores only the deliberately distilled continuity
+record, not a copy of the raw operational log.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from uuid import UUID, uuid4
 import httpx
 
 from core.connectors.base import Connector, ConnectorManifest, InvocationContext, ToolSpec
+from core.continuity.experiences import SyncbondExperienceStore, distill_scrappy_os_status
 from core.contracts.syncbond import ActorKind, EventType, Objective, envelope
 from core.logging import get_logger
 
@@ -90,14 +96,40 @@ _TOOLS = [
         },
         executor="server",
     ),
+    ToolSpec(
+        name="record_terminal_experience",
+        description=(
+            "Persist one verified terminal Scrappy OS outcome as a durable Vault Experience. "
+            "The remote task must echo the exact originating SYNCBOND correlation id. "
+            "This changes durable memory and therefore requires explicit approval."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "objective_id": {
+                    "type": "string",
+                    "description": "Scrappy OS objective id returned by submit_read_objective.",
+                },
+                "correlation_id": {
+                    "type": "string",
+                    "description": "SYNCBOND correlation id from the originating objective envelope.",
+                },
+            },
+            "required": ["objective_id", "correlation_id"],
+            "additionalProperties": False,
+        },
+        executor="server",
+        requires_approval=True,
+        side_effects=["writes an idempotent durable SYNCBOND Experience in Vault Zeta"],
+    ),
 ]
 
 
 class ScrappyOSConnector(Connector):
     manifest = ConnectorManifest(
         name="scrappy_os",
-        version="0.1.0",
-        description="Read-only SYNCBOND bridge to the Scrappy OS machine control plane.",
+        version="0.2.0",
+        description="Read-only Scrappy OS bridge with approval-gated verified Experience ingestion.",
         tools=_TOOLS,
     )
 
@@ -107,10 +139,12 @@ class ScrappyOSConnector(Connector):
         base_url: str | None = None,
         token: str | None = None,
         client: httpx.AsyncClient | None = None,
+        experience_store: SyncbondExperienceStore | None = None,
     ) -> None:
         self.base_url = (base_url or os.getenv("SCRAPPY_OS_BASE_URL", "")).strip().rstrip("/")
         self.token = (token or os.getenv("SCRAPPY_OS_API_TOKEN", "")).strip()
         self._client = client
+        self._experience_store = experience_store or SyncbondExperienceStore()
         if self.base_url:
             self._validate_base_url(self.base_url)
 
@@ -158,6 +192,16 @@ class ScrappyOSConnector(Connector):
         if not isinstance(value, dict):
             raise RuntimeError("Scrappy OS returned an unexpected response shape")
         return value
+
+    @staticmethod
+    def _uuid(value: Any, name: str) -> UUID:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError(f"{name} is required")
+        try:
+            return UUID(text)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a UUID") from exc
 
     async def invoke(self, action: str, args: dict, ctx: InvocationContext) -> Any:
         if action == "health":
@@ -211,8 +255,6 @@ class ScrappyOSConnector(Connector):
                 headers={
                     **self._headers(require_auth=True),
                     "Content-Type": "application/json",
-                    # Current Scrappy OS ignores this header; carrying it now lets
-                    # the API adopt it later without changing the Vault contract.
                     "X-Syncbond-Correlation-ID": str(correlation_id),
                     "X-Syncbond-Version": requested.schema_version,
                 },
@@ -226,6 +268,11 @@ class ScrappyOSConnector(Connector):
             remote_id = str(remote.get("objective_id") or "").strip()
             if not remote_id:
                 raise RuntimeError("Scrappy OS accepted a task without returning objective_id")
+            self._uuid(remote_id, "remote objective_id")
+
+            echoed = remote.get("correlation_id")
+            if echoed is not None and self._uuid(echoed, "remote correlation_id") != correlation_id:
+                raise RuntimeError("Scrappy OS returned a mismatched correlation_id")
 
             log.info(
                 "scrappy_os.objective_submitted",
@@ -242,24 +289,44 @@ class ScrappyOSConnector(Connector):
             }
 
         if action == "task_status":
-            remote_id = str(args.get("objective_id", "")).strip()
-            if not remote_id:
-                raise ValueError("objective_id is required")
-            # Avoid path injection and accidental calls to unrelated endpoints.
-            try:
-                UUID(remote_id)
-            except ValueError as exc:
-                raise ValueError("objective_id must be a UUID") from exc
-
+            remote_id = self._uuid(args.get("objective_id"), "objective_id")
             response = await self._request(
                 "GET",
                 f"/tasks/{remote_id}",
                 headers=self._headers(require_auth=True),
             )
             result = self._json(response)
-            # Return the control-plane evidence as-is; it is still explicitly
-            # marked as remote evidence rather than silently becoming Vault truth.
             return {"remote": result}
+
+        if action == "record_terminal_experience":
+            remote_id = self._uuid(args.get("objective_id"), "objective_id")
+            correlation_id = self._uuid(args.get("correlation_id"), "correlation_id")
+            response = await self._request(
+                "GET",
+                f"/tasks/{remote_id}",
+                headers=self._headers(require_auth=True),
+            )
+            remote = self._json(response)
+            distilled = distill_scrappy_os_status(
+                remote,
+                expected_correlation_id=correlation_id,
+            )
+            user_uuid = ctx.user_uuid if isinstance(ctx.user_uuid, UUID) else None
+            stored, created = await self._experience_store.put(distilled, user_id=user_uuid)
+            log.info(
+                "scrappy_os.experience_recorded",
+                correlation_id=str(correlation_id),
+                remote_objective_id=str(remote_id),
+                created=created,
+                experience_id=str(stored.get("id")),
+            )
+            return {
+                "created": created,
+                "experience_id": str(stored.get("id")),
+                "outcome": distilled.experience.outcome,
+                "summary": distilled.experience.summary,
+                "syncbond": distilled.envelope.model_dump(mode="json"),
+            }
 
         raise ValueError(f"unknown scrappy_os action: {action}")
 
