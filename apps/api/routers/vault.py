@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from apps.api.deps import get_embedder, get_episodic, get_semantic
 from core.config import get_settings
+from core.continuity.promotion_records import SyncbondPromotionRecordStore
 from core.logging import get_logger
 from core.memory.embedder import Embedder
 from core.memory.episodic import EpisodicStore
@@ -46,6 +48,10 @@ class ExportBody(BaseModel):
 class ImportBody(BaseModel):
     path: str = Field(description="Directory holding a vault bundle.")
     dry_run: bool = False
+
+
+class PromotionRecordBody(BaseModel):
+    record: dict[str, Any]
 
 
 def _expand(raw: str) -> Path:
@@ -120,4 +126,39 @@ async def import_vault(
         "dry_run": body.dry_run,
         "source": bundle.summary(),
         **report.to_dict(),
+    }
+
+
+@router.post("/promotion-records")
+async def archive_promotion_record(body: PromotionRecordBody) -> dict:
+    """Archive one content-addressed signed promotion record.
+
+    This is governance storage only. It neither merges nor deploys the candidate.
+    """
+    try:
+        row, created = await SyncbondPromotionRecordStore().put(body.record)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {
+        "ok": True,
+        "created": created,
+        "manifest_sha256": row["manifest_sha256"],
+        "record_sha256": row["record_sha256"],
+        "eligible_for_merge": row["eligible_for_merge"],
+        "authority": {"execution": False, "merge": False, "deploy": False},
+    }
+
+
+@router.get("/promotion-records/{manifest_sha256}")
+async def list_promotion_records(manifest_sha256: str) -> dict:
+    """Return immutable governance history for one candidate manifest."""
+    try:
+        rows = await SyncbondPromotionRecordStore().list_for_manifest(manifest_sha256)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {
+        "ok": True,
+        "manifest_sha256": manifest_sha256.lower(),
+        "records": rows,
+        "authority": {"execution": False, "merge": False, "deploy": False},
     }
