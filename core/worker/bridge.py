@@ -80,6 +80,11 @@ class WorkerBridge:
         self._last_seen = time.monotonic()
 
     def worker_online(self) -> bool:
+        # ``0.0`` is the explicit "never observed" sentinel. On freshly booted
+        # hosts time.monotonic() itself can still be below ONLINE_WINDOW, so a
+        # bare subtraction would otherwise claim an unseen worker is online.
+        if self._last_seen == 0.0:
+            return False
         return (time.monotonic() - self._last_seen) < self.ONLINE_WINDOW
 
     def seconds_since_seen(self) -> float | None:
