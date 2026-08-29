@@ -25,3 +25,4 @@ jobs:
           tests/test_scrappy_os_connector.py
           tests/test_syncbond_experiences.py
           tests/test_syncbond_evidence_bundle.py
+          tests/test_syncbond_promotion_records.py
