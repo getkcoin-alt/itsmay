@@ -10,7 +10,6 @@ from core.companion import tenants
 from core.companion.emotion_stream import EmotionResponseParser
 from core.companion.voice_features import EMBED_DIM, embed_pcm
 
-
 # ── emotion streaming ─────────────────────────────────────────────
 
 
