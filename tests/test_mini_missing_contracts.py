@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from core.companion import tenants
 from core.companion.emotion_stream import EmotionResponseParser
 from core.companion.voice_features import EMBED_DIM, embed_pcm
+from core.companion import tenants
 
 
 # ── emotion streaming ─────────────────────────────────────────────
@@ -73,8 +73,6 @@ def test_emotion_parser_malformed_json_never_falls_back_to_raw_json_speech():
 def _tone(freq: float, *, sr: int = 16_000, seconds: float = 0.8) -> np.ndarray:
     t = np.arange(int(sr * seconds), dtype=np.float32) / sr
     wav = 0.35 * np.sin(2 * np.pi * freq * t)
-    # Browser endpoint sends little-endian int16; the embedder accepts this
-    # numeric form after the router's PCM decoder.
     return np.asarray(wav * 32767.0, dtype=np.int16)
 
 
@@ -100,9 +98,6 @@ def test_voice_features_resample_to_same_contract_dimension():
     at_16k = embed_pcm(_tone(220.0, sr=16_000), 16_000)
     assert at_8k.shape == at_16k.shape == (EMBED_DIM,)
     assert np.any(at_8k) and np.any(at_16k)
-
-
-# ── tenant PIN + isolation ────────────────────────────────────────
 
 
 @pytest.fixture
