@@ -2,13 +2,14 @@
 
 The bundle contains only the already-distilled SYNCBOND Experience envelope.
 It deliberately excludes database ids, credentials, raw machine logs and private
-memory records.  Forge can validate this document without connecting to Vault's
+memory records. Forge can validate this document without connecting to Vault's
 database or Scrappy OS.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from typing import Any
 
@@ -59,7 +60,7 @@ def verify_bundle_hash(bundle: dict[str, Any]) -> bool:
         return False
     body = {key: value for key, value in bundle.items() if key != "bundle_sha256"}
     actual = hashlib.sha256(_canonical(body)).hexdigest()
-    return hashlib.compare_digest(actual, claimed)
+    return hmac.compare_digest(actual, claimed)
 
 
 __all__ = ["BUNDLE_FORMAT", "export_experience_bundle", "verify_bundle_hash"]
