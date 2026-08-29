@@ -19,4 +19,11 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
+      - name: Lint restored Mini contracts
+        run: >-
+          ruff check
+          core/companion/emotion_stream.py
+          core/companion/tenants.py
+          core/companion/voice_features.py
+          tests/test_mini_missing_contracts.py
       - run: pytest -q
