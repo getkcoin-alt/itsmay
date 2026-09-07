@@ -1,6 +1,6 @@
 [project]
 name = "vault-zeta"
-version = "0.1.0"
+version = "0.2.0"
 description = "Vault Zeta Node SSN-92C — Scrappy Singh, sovereign personal AI operator"
 requires-python = ">=3.11"
 dependencies = [
@@ -19,6 +19,7 @@ dependencies = [
     "fastembed>=0.4",
     "pyyaml>=6.0",
     "redis[hiredis]>=5.0",
+    "mcp>=2.0,<3",
 ]
 
 [project.scripts]
