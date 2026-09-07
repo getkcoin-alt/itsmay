@@ -16,7 +16,6 @@ from apps.api.routers import chat as chat_router
 from apps.api.routers import console as console_router
 from apps.api.routers import identity as identity_router
 from apps.api.routers import memory as memory_router
-from apps.api.routers import mini as mini_router
 from apps.api.routers import settings as settings_router
 from apps.api.routers import vault as vault_router
 from apps.api.routers import voice as voice_router
@@ -63,14 +62,19 @@ async def lifespan(app: FastAPI):
     app.state.tts = ElevenLabsTTS()
     app.state.stt = WhisperSTT()
 
-    # Mini AI companion engine (fully local: Ollama + SQLite).
-    try:
-        from core.companion.runtime import build_engine
+    # Mini is an optional local companion surface. Its engine may rely on local
+    # model/audio components that are deliberately not required by the cloud
+    # Vault API. A Mini failure must never take down memory/MCP continuity.
+    if getattr(app.state, "mini_router_available", False):
+        try:
+            from core.companion.runtime import build_engine
 
-        app.state.companion = build_engine()
-        log.info("companion.ready", model=get_settings().companion_model)
-    except Exception as e:
-        log.warning("companion.init_failed", error=str(e))
+            app.state.companion = build_engine()
+            log.info("companion.ready", model=get_settings().companion_model)
+        except Exception as e:
+            log.warning("companion.init_failed", error=str(e))
+            app.state.companion = None
+    else:
         app.state.companion = None
 
     # Mounted ASGI applications do not receive their own lifespan events. MCP's
@@ -126,6 +130,35 @@ def _render_index(html: str, *, base_url: str, gsc_token: str = "") -> str:
     return html
 
 
+def _mount_optional_mini(app: FastAPI) -> None:
+    """Mount Mini only when its complete companion package is available.
+
+    The repository currently contains an optional/in-progress Mini surface. Cloud
+    Vault deployments must remain fail-closed for auth but fail-open with respect
+    to an unavailable optional UI/companion module: persistent memory and MCP are
+    the core service and must still boot.
+    """
+    log = get_logger("api")
+    try:
+        from apps.api.routers import mini as mini_router
+    except ModuleNotFoundError as exc:
+        # Only downgrade missing companion internals. A missing unrelated runtime
+        # dependency is still a deployment defect and should fail loudly.
+        missing = exc.name or ""
+        if not missing.startswith("core.companion."):
+            raise
+        app.state.mini_router_available = False
+        app.state.mini_router_error = missing
+        log.warning("companion.router_unavailable", missing_module=missing)
+        return
+
+    app.include_router(mini_router.router)
+    if hasattr(mini_router, "admin_router"):
+        app.include_router(mini_router.admin_router)
+    app.state.mini_router_available = True
+    app.state.mini_router_error = None
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
@@ -156,7 +189,7 @@ def create_app() -> FastAPI:
     app.include_router(browser_router.router)
     app.include_router(agents_router.router)
     app.include_router(memory_router.router)
-    app.include_router(mini_router.router)
+    _mount_optional_mini(app)
     app.include_router(settings_router.router)
     app.include_router(worker_router.router)
     app.include_router(vault_router.router)
@@ -245,6 +278,10 @@ def create_app() -> FastAPI:
                 "transport": "streamable-http",
                 "endpoint": "/mcp/",
                 "shared_memory": True,
+            },
+            "mini": {
+                "available": bool(getattr(app.state, "mini_router_available", False)),
+                "missing_module": getattr(app.state, "mini_router_error", None),
             },
             "connectors": sorted(installed),
             "experts": {
