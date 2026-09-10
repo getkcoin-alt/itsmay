@@ -1,0 +1,32 @@
+name: continuous-presence
+
+on:
+  pull_request:
+    paths:
+      - "core/presence/**"
+      - "core/companion/emotion_stream.py"
+      - "apps/api/main.py"
+      - "apps/api/routers/presence.py"
+      - "apps/mac_agent/presence_listener.py"
+      - "tests/test_presence.py"
+      - "tests/test_emotion_stream.py"
+      - ".github/workflows/continuous-presence.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Import API
+        run: python -c "import apps.api.main; print('api import: ok')"
+      - name: Targeted tests
+        run: pytest -q tests/test_presence.py tests/test_emotion_stream.py
+      - name: Ruff
+        run: ruff check core/presence core/companion/emotion_stream.py apps/api/routers/presence.py apps/mac_agent/presence_listener.py tests/test_presence.py tests/test_emotion_stream.py
