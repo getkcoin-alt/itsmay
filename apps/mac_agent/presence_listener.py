@@ -84,7 +84,7 @@ async def main() -> None:
                     await _synth(client, text, tmp)
                     await _play(tmp)
                 finally:
-                    tmp.unlink(missing_ok=True)
+                    await asyncio.to_thread(tmp.unlink, missing_ok=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
