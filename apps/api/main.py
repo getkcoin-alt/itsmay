@@ -17,7 +17,6 @@ from apps.api.routers import chat as chat_router
 from apps.api.routers import console as console_router
 from apps.api.routers import identity as identity_router
 from apps.api.routers import memory as memory_router
-from apps.api.routers import mini as mini_router
 from apps.api.routers import presence as presence_router
 from apps.api.routers import settings as settings_router
 from apps.api.routers import vault as vault_router
@@ -165,7 +164,21 @@ def create_app() -> FastAPI:
     app.include_router(browser_router.router)
     app.include_router(agents_router.router)
     app.include_router(memory_router.router)
-    app.include_router(mini_router.router)
+
+    # Mini is an optional companion surface. It must never be able to take the
+    # Vault/memory/presence API down just because one optional Mini module is
+    # missing or broken. We expose the real availability in `/status` below.
+    try:
+        from apps.api.routers import mini as mini_router
+
+        app.include_router(mini_router.router)
+        app.state.mini_router_available = True
+        app.state.mini_router_error = None
+    except Exception as exc:
+        app.state.mini_router_available = False
+        app.state.mini_router_error = f"{type(exc).__name__}: {exc}"
+        get_logger("api").warning("mini.router_unavailable", error=app.state.mini_router_error)
+
     app.include_router(presence_router.router)
     app.include_router(settings_router.router)
     app.include_router(worker_router.router)
@@ -237,6 +250,12 @@ def create_app() -> FastAPI:
             "stt_provider": settings.stt_provider,
             "auth_enabled": bool(settings.vault_api_key),
             "presence": get_presence_runtime().status(),
+            "optional_components": {
+                "mini_router": {
+                    "available": bool(getattr(app.state, "mini_router_available", False)),
+                    "error": getattr(app.state, "mini_router_error", None),
+                }
+            },
             "connectors": sorted(installed),
             "experts": {
                 "online": sorted(f"ask_{n}" for n in online),
