@@ -1,6 +1,9 @@
 name: continuous-presence
 
 on:
+  push:
+    branches:
+      - "scrappy/continuous-presence-v1"
   pull_request:
     paths:
       - "core/presence/**"
