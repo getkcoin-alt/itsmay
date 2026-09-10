@@ -17,9 +17,9 @@ def _utcnow() -> datetime:
 class DecisionKind(StrEnum):
     """What the presence layer decided should happen next.
 
-    V1 only executes SILENCE/SPEAK as an *attention decision*. ACT and the other
+    V1 executes SILENCE/SPEAK only as an attention decision. ACT and the other
     values are reserved contracts for later policy-gated orchestration; the
-    presence runtime never turns them into side effects by itself.
+    presence runtime never turns them into consequential side effects by itself.
     """
 
     SILENCE = "SILENCE"
@@ -61,4 +61,22 @@ class PresenceDecision(BaseModel):
     decision: DecisionKind
     score: float = Field(ge=0.0, le=1.0)
     reason: str
+    timestamp: datetime = Field(default_factory=_utcnow)
+
+
+class PresenceUtterance(BaseModel):
+    """A non-consequential proactive message waiting for an output client.
+
+    V1 only creates an utterance when an accepted event both crosses the SPEAK
+    threshold and explicitly carries a human-readable `payload.message`. This
+    keeps the presence layer deterministic: it never invents text or silently
+    calls an LLM just because a heartbeat fired.
+    """
+
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    event_id: str
+    trace_id: str
+    text: str = Field(min_length=1, max_length=4000)
+    source: str
+    domain: str
     timestamp: datetime = Field(default_factory=_utcnow)
