@@ -17,6 +17,7 @@ from apps.api.routers import console as console_router
 from apps.api.routers import identity as identity_router
 from apps.api.routers import memory as memory_router
 from apps.api.routers import mini as mini_router
+from apps.api.routers import presence as presence_router
 from apps.api.routers import settings as settings_router
 from apps.api.routers import vault as vault_router
 from apps.api.routers import voice as voice_router
@@ -31,6 +32,7 @@ from core.memory.episodic import EpisodicStore
 from core.memory.migrate import run_migrations
 from core.memory.semantic import SemanticStore
 from core.memory.sqlite_store import SqliteEpisodicStore, SqliteSemanticStore, ensure_schema
+from core.presence.runtime import get_presence_runtime
 from core.util.redis_pool import close_redis
 from core.voice.stt_whisper import WhisperSTT
 from core.voice.tts_elevenlabs import ElevenLabsTTS
@@ -70,9 +72,17 @@ async def lifespan(app: FastAPI):
         log.warning("companion.init_failed", error=str(e))
         app.state.companion = None
 
+    # Continuous Presence is deliberately side-effect-free in V1. It keeps a real
+    # node identity + heartbeat and waits for normalized events even when Karnveer
+    # sends no message. Consequential actions remain outside this layer.
+    app.state.presence = get_presence_runtime()
+    await app.state.presence.start()
+    log.info("presence.ready", node_id=app.state.presence.node_id)
+
     yield
 
     log.info("api.shutdown")
+    await app.state.presence.stop()
     await app.state.llm.aclose()
     await app.state.embedder.aclose()
     await app.state.tts.aclose()
@@ -143,6 +153,7 @@ def create_app() -> FastAPI:
     app.include_router(agents_router.router)
     app.include_router(memory_router.router)
     app.include_router(mini_router.router)
+    app.include_router(presence_router.router)
     app.include_router(settings_router.router)
     app.include_router(worker_router.router)
     app.include_router(vault_router.router)
@@ -212,6 +223,7 @@ def create_app() -> FastAPI:
             "llm_model": settings.llm_model,
             "stt_provider": settings.stt_provider,
             "auth_enabled": bool(settings.vault_api_key),
+            "presence": get_presence_runtime().status(),
             "connectors": sorted(installed),
             "experts": {
                 "online": sorted(f"ask_{n}" for n in online),
