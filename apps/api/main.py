@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from core.memory.migrate import run_migrations
 from core.memory.semantic import SemanticStore
 from core.memory.sqlite_store import SqliteEpisodicStore, SqliteSemanticStore, ensure_schema
 from core.presence.runtime import get_presence_runtime
+from core.presence.sources import watch_worker_presence
 from core.util.redis_pool import close_redis
 from core.voice.stt_whisper import WhisperSTT
 from core.voice.tts_elevenlabs import ElevenLabsTTS
@@ -66,22 +68,33 @@ async def lifespan(app: FastAPI):
     # Mini AI companion engine (fully local: Ollama + SQLite).
     try:
         from core.companion.runtime import build_engine
+
         app.state.companion = build_engine()
         log.info("companion.ready", model=get_settings().companion_model)
     except Exception as e:
         log.warning("companion.init_failed", error=str(e))
         app.state.companion = None
 
-    # Continuous Presence is deliberately side-effect-free in V1. It keeps a real
-    # node identity + heartbeat and waits for normalized events even when Karnveer
-    # sends no message. Consequential actions remain outside this layer.
+    # Continuous Presence keeps a real node identity + heartbeat and receives
+    # normalized events even when Karnveer sends no message. The first read-only
+    # source watches the already-existing Mac worker bridge for actual connection
+    # transitions. Consequential actions remain outside this layer.
     app.state.presence = get_presence_runtime()
     await app.state.presence.start()
+    app.state.presence_source_tasks = [
+        asyncio.create_task(
+            watch_worker_presence(app.state.presence),
+            name="presence-source-worker",
+        )
+    ]
     log.info("presence.ready", node_id=app.state.presence.node_id)
 
     yield
 
     log.info("api.shutdown")
+    for task in app.state.presence_source_tasks:
+        task.cancel()
+    await asyncio.gather(*app.state.presence_source_tasks, return_exceptions=True)
     await app.state.presence.stop()
     await app.state.llm.aclose()
     await app.state.embedder.aclose()
