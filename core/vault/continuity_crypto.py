@@ -13,6 +13,7 @@ never paged or journaled by the operating system.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -64,6 +65,11 @@ def write_encrypted_private_capsule(
 ) -> Path:
     """Build a private capsule and write one authenticated encrypted file.
 
+    The encrypted capsule contains two complementary representations:
+
+    * provider-neutral continuity records/bootstrap for a fresh model; and
+    * the canonical portable ``VaultBundle`` for deterministic Vault restore.
+
     ``conversation_report`` is already-normalized local export data. When
     supplied it is added only to the ephemeral private staging directory and is
     therefore covered by both per-file SHA-256 and the outer AES-GCM envelope.
@@ -85,6 +91,7 @@ def write_encrypted_private_capsule(
             spec=spec,
             encrypted_destination=True,
         )
+        _attach_vault_bundle(staging, bundle)
         if conversation_report is not None:
             augment_private_capsule(staging, conversation_report)
         _pack_tar(staging, tar_path)
@@ -127,6 +134,32 @@ def inspect_encrypted_header(path: Path) -> dict:
             return json.loads(fh.read(header_len).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise InvalidEncryptedCapsule("invalid encrypted capsule header") from exc
+
+
+def _attach_vault_bundle(staging: Path, bundle: VaultBundle) -> None:
+    """Embed the canonical importable Vault bundle and extend file integrity."""
+    vault_dir = staging / "vault_bundle"
+    bundle.write(vault_dir)
+
+    manifest_path = staging / "manifest.json"
+    checksum_path = staging / "provenance" / "checksums.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["embedded_vault_bundle"] = True
+    manifest["embedded_vault_protocol_version"] = bundle.manifest.protocol_version
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    checksums = json.loads(checksum_path.read_text(encoding="utf-8"))
+    checksums["manifest.json"] = _sha256_file(manifest_path)
+    for path in sorted(vault_dir.rglob("*")):
+        if path.is_file():
+            checksums[path.relative_to(staging).as_posix()] = _sha256_file(path)
+    checksum_path.write_text(
+        json.dumps(checksums, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _pack_tar(source: Path, target: Path) -> None:
@@ -251,6 +284,14 @@ def _safe_extract_tar(tar_path: Path, destination: Path) -> None:
             if member.issym() or member.islnk():
                 raise InvalidEncryptedCapsule("archive links are not allowed")
         tar.extractall(destination, members=members, filter="data")
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def erase_directory_best_effort(path: Path) -> None:
