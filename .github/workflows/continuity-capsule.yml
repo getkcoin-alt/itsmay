@@ -13,6 +13,7 @@ on:
       - "apps/api/routers/vault.py"
       - "apps/cli/continuity.py"
       - "tests/test_continuity_capsule.py"
+      - "tests/test_continuity_restore_artifact.py"
       - "tests/test_conversation_ingest.py"
       - "tests/test_vault_transport.py"
       - "pyproject.toml"
@@ -40,8 +41,8 @@ jobs:
           scrappy-continuity --help
       - name: Targeted tests
         run: |
-          pytest -q tests/test_continuity_capsule.py tests/test_conversation_ingest.py tests/test_vault_transport.py
+          pytest -q tests/test_continuity_capsule.py tests/test_continuity_restore_artifact.py tests/test_conversation_ingest.py tests/test_vault_transport.py
       - name: Ruff
         run: |
-          ruff check core/vault/continuity.py core/vault/continuity_crypto.py core/vault/conversation_ingest.py core/vault/transport.py apps/cli/continuity.py tests/test_continuity_capsule.py tests/test_conversation_ingest.py tests/test_vault_transport.py
+          ruff check core/vault/continuity.py core/vault/continuity_crypto.py core/vault/conversation_ingest.py core/vault/transport.py apps/cli/continuity.py tests/test_continuity_capsule.py tests/test_continuity_restore_artifact.py tests/test_conversation_ingest.py tests/test_vault_transport.py
           ruff check --ignore B008 apps/api/routers/vault.py
