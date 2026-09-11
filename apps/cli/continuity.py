@@ -2,15 +2,15 @@
 
 The important security boundary is location: live Vault data is downloaded over
 the authenticated API into an ephemeral local temp directory, and encryption is
-performed on the operator's machine. The continuity passphrase is never sent to
-the API or model provider.
+performed on the operator's machine. The continuity passphrase and optional
+conversation export are never sent to the Vault API or a model provider.
 
 Examples:
 
     scrappy-continuity backup --out ~/.itsmay/backups/scrappy.enc
+    scrappy-continuity backup --conversation-export ~/Downloads/conversations.json
+    scrappy-continuity inspect-export ~/Downloads/conversations.json
     scrappy-continuity verify-encrypted ~/.itsmay/backups/scrappy.enc
-    scrappy-continuity inspect ~/.itsmay/backups/scrappy.enc
-    scrappy-continuity verify-dir /path/to/decrypted/scrappy-continuity
 """
 
 from __future__ import annotations
@@ -42,6 +42,10 @@ from core.vault.continuity_crypto import (
     decrypt_private_capsule,
     inspect_encrypted_header,
     write_encrypted_private_capsule,
+)
+from core.vault.conversation_ingest import (
+    UnsupportedConversationExport,
+    ingest_conversation_export,
 )
 from core.vault.transport import extract_vault_archive
 
@@ -141,6 +145,16 @@ def _backup(args: argparse.Namespace) -> int:
     output = Path(args.out).expanduser() if args.out else _default_output()
     output.parent.mkdir(parents=True, exist_ok=True)
     spec_path = Path(args.spec).expanduser() if args.spec else None
+    conversation_report = None
+    if args.conversation_export:
+        source = Path(args.conversation_export).expanduser()
+        print(f"Normalizing private conversation export locally: {source} …")
+        conversation_report = ingest_conversation_export(source)
+        summary = conversation_report.summary()
+        print(
+            f"  {summary['conversations']} conversations · {summary['turns']} turns · "
+            f"{summary['redacted_turns']} credential-shaped turn(s) masked"
+        )
 
     print(f"Downloading live Vault from {API_BASE} …")
     with tempfile.TemporaryDirectory(prefix="scrappy-backup-") as tmp:
@@ -159,6 +173,7 @@ def _backup(args: argparse.Namespace) -> int:
                 output,
                 spec=spec,
                 passphrase=passphrase,
+                conversation_report=conversation_report,
             )
         finally:
             passphrase = ""  # best-effort reference release; Python strings are immutable
@@ -168,7 +183,14 @@ def _backup(args: argparse.Namespace) -> int:
     print(f"✓ encrypted continuity backup: {output}")
     print(f"  bytes: {size:,}")
     print(f"  sha256: {digest}")
-    print("  passphrase was used locally and was never sent to the Vault API.")
+    print("  passphrase and conversation export stayed local; temp plaintext was removed.")
+    return 0
+
+
+def _inspect_export(args: argparse.Namespace) -> int:
+    """Parse an export and show counts only; never print conversation text."""
+    report = ingest_conversation_export(Path(args.path).expanduser())
+    print(json.dumps(report.summary(), indent=2, ensure_ascii=False))
     return 0
 
 
@@ -260,8 +282,16 @@ def _parser() -> argparse.ArgumentParser:
     backup = sub.add_parser("backup", help="download live Vault and encrypt it locally")
     backup.add_argument("--out", help="encrypted output path")
     backup.add_argument("--spec", help="private continuity_spec.json path")
+    backup.add_argument(
+        "--conversation-export",
+        help="local ChatGPT conversations.json to normalize into the encrypted capsule",
+    )
     backup.add_argument("--no-episodes", action="store_true", help="omit raw Vault episodes")
     backup.set_defaults(func=_backup)
+
+    export = sub.add_parser("inspect-export", help="show local conversation-export counts only")
+    export.add_argument("path")
+    export.set_defaults(func=_inspect_export)
 
     verify_enc = sub.add_parser("verify-encrypted", help="decrypt ephemerally and verify hashes")
     verify_enc.add_argument("path")
@@ -296,7 +326,13 @@ def main() -> None:
     args = parser.parse_args()
     try:
         code = int(args.func(args) or 0)
-    except (ContinuityCryptoUnavailable, InvalidEncryptedCapsule, ValueError, RuntimeError) as exc:
+    except (
+        ContinuityCryptoUnavailable,
+        InvalidEncryptedCapsule,
+        UnsupportedConversationExport,
+        ValueError,
+        RuntimeError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         code = 2
     except httpx.HTTPStatusError as exc:
