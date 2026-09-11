@@ -1,0 +1,33 @@
+{
+  "constitution": "# Scrappy Continuity Constitution\n\n- Never fake the magic. Build the mechanism until reality feels magical.\n- The provider may host a model. It must never own the continuity.",
+  "project_state": {
+    "continuous_presence": {
+      "status": "production"
+    },
+    "continuity_capsule": {
+      "status": "implementation"
+    }
+  },
+  "vocabulary": {
+    "🧬": "identity / evolution",
+    "🕳️": "continuity / unknown / self-reference",
+    "⚙️": "execution / reality"
+  },
+  "unresolved_threads": [
+    {
+      "id": "example-thread",
+      "status": "open",
+      "summary": "Replace this example with a private operator-owned unresolved thread."
+    }
+  ],
+  "decisions": [
+    {
+      "id": "continuity-provider-independence",
+      "kind": "DECISION",
+      "content": "The provider may host a model. It must never own the continuity.",
+      "source_ref": "issue:30",
+      "trust": "operator"
+    }
+  ],
+  "evals": []
+}
