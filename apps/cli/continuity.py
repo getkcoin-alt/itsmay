@@ -240,7 +240,10 @@ def _restore(args: argparse.Namespace) -> int:
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
     if dry_run:
-        print("No Vault records were changed. Re-run with --apply only after reviewing this report.")
+        print(
+            "No Vault records were changed. "
+            "Re-run with --apply only after reviewing this report."
+        )
     else:
         print("✓ restore host accepted the Vault import.")
     return 0
