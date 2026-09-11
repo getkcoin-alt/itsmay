@@ -84,7 +84,7 @@ class ContinuityRecord(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     x: dict[str, Any] = Field(default_factory=dict)
 
-    def normalized(self) -> "ContinuityRecord":
+    def normalized(self) -> ContinuityRecord:
         if self.content_sha256:
             return self
         return self.model_copy(update={"content_sha256": content_hash(self.content)})
