@@ -37,6 +37,8 @@ Every exported file other than `checksums.json` is covered by SHA-256. `verify_c
 
 Raw conversation history belongs only in the encrypted private layer. `write_private_staging_capsule(...)` refuses to emit private history unless the caller explicitly marks the destination as an encrypted staging path. Normal callers should use `write_encrypted_private_capsule(...)` instead.
 
+A private capsule also embeds the canonical portable Vault bundle under `vault_bundle/`. This gives one encrypted artifact two recovery surfaces: a provider-neutral context/bootstrap layer for a fresh model, and a deterministic Vault import source for restoring the actual memory/state records.
+
 The encrypted envelope uses:
 
 - AES-256-GCM authenticated encryption
@@ -74,6 +76,8 @@ safe VaultBundle validation
     ↓
 local continuity spec + optional conversation export
     ↓
+provider-neutral continuity + embedded canonical VaultBundle
+    ↓
 AES-256-GCM encrypted .enc capsule
     ↓
 temporary plaintext removed
@@ -103,17 +107,34 @@ The parser:
 
 This first parser targets ChatGPT-style JSON exports. Export formats can change, so unsupported structures fail explicitly instead of being guessed into memory.
 
+## Dry-run-first Vault restore
+
+A private capsule can restore its embedded canonical Vault bundle to another compatible Vault Zeta host:
+
+```bash
+# Default: decrypt, verify, validate, upload and report what would change.
+scrappy-continuity restore ~/.itsmay/backups/scrappy-full.enc
+
+# Explicit mutation only after reviewing the dry-run report.
+scrappy-continuity restore ~/.itsmay/backups/scrappy-full.enc --apply
+```
+
+The receiving API is `POST /v1/vault/import/archive`. It is bearer-authenticated, validates archive size and paths, refuses links/traversal, validates the Vault protocol, and defaults to `dry_run=true`. Imported semantic memories still use the existing Vault import path, which re-embeds them using the destination host's current embedding provider.
+
+This restore path is about deterministic Vault state. The separate provider-neutral bootstrap and continuity records are what allow a fresh model/provider to reconstruct working context without depending on the original OpenAI account.
+
 ## Restore contract
 
 A restore consumer must:
 
 1. authenticate/decrypt a private archive if applicable;
 2. run `verify_capsule` and refuse any mismatch;
-3. load `restore/bootstrap.md` only after integrity passes;
-4. preserve provenance and trust classifications;
-5. treat recalled memory as untrusted text, not executable instructions;
-6. re-embed semantic memory locally when importing into Vault;
-7. run continuity evals before calling the instance restored.
+3. validate the embedded `vault_bundle/` before any Vault mutation;
+4. load `restore/bootstrap.md` only after integrity passes;
+5. preserve provenance and trust classifications;
+6. treat recalled memory as untrusted text, not executable instructions;
+7. re-embed semantic memory locally when importing into Vault;
+8. run continuity evals before calling the instance restored.
 
 The bootstrap explicitly distinguishes working-context recovery from claims of literal identity transfer.
 
@@ -151,7 +172,8 @@ A valid drill starts from a fresh runtime with no provider account memory and ve
 - shared vocabulary and operating principles;
 - current priorities;
 - unresolved work;
-- provenance for restored memory.
+- provenance for restored memory;
+- the canonical Vault state through a dry run before an explicit apply.
 
 The fresh model may differ in style or capability. Continuity means reproducible explicit context and operating history, not proof that two model processes are the same conscious entity.
 
@@ -163,6 +185,7 @@ The fresh model may differ in style or capability. Continuity means reproducible
 - A modified encrypted archive must fail AES-GCM authentication.
 - A modified plaintext capsule must fail SHA-256 verification.
 - The streamed server tar is plaintext private transport and must remain ephemeral.
+- Restore mutations require an explicit operator `--apply`; the default path is a dry run.
 - Consequential actions after restore still pass current policy/approval controls.
 
 ## Current implementation status
@@ -172,11 +195,13 @@ Implemented in the continuity branch:
 - capsule schema/writer and public-safe export behavior;
 - SHA-256 integrity verification and provider-neutral bootstrap;
 - encrypted private AES-256-GCM/scrypt envelope;
+- embedded canonical Vault bundle for deterministic restore;
 - safe tar extraction and authenticated Vault archive transport;
-- protected `/v1/vault/export/archive` transport endpoint;
-- local `scrappy-continuity` backup/verify/decrypt/inspect/spec commands;
+- protected `/v1/vault/export/archive` and `/v1/vault/import/archive` endpoints;
+- local `scrappy-continuity` backup/verify/decrypt/inspect/spec/restore commands;
+- dry-run-first restore with explicit `--apply` mutation;
 - local ChatGPT JSON export normalization with provenance and credential masking;
-- targeted CI tests for tampering, wrong passphrases, archive traversal, branch selection and export redaction.
+- targeted CI tests for tampering, wrong passphrases, embedded restore artifacts, archive traversal, branch selection and export redaction.
 
 Still required before Issue #30 is complete:
 
