@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from apps.api.routers import chat as chat_router
 from apps.api.routers import console as console_router
 from apps.api.routers import identity as identity_router
 from apps.api.routers import memory as memory_router
-from apps.api.routers import mini as mini_router
+from apps.api.routers import presence as presence_router
 from apps.api.routers import settings as settings_router
 from apps.api.routers import vault as vault_router
 from apps.api.routers import voice as voice_router
@@ -31,6 +32,8 @@ from core.memory.episodic import EpisodicStore
 from core.memory.migrate import run_migrations
 from core.memory.semantic import SemanticStore
 from core.memory.sqlite_store import SqliteEpisodicStore, SqliteSemanticStore, ensure_schema
+from core.presence.runtime import get_presence_runtime
+from core.presence.sources import watch_worker_presence
 from core.util.redis_pool import close_redis
 from core.voice.stt_whisper import WhisperSTT
 from core.voice.tts_elevenlabs import ElevenLabsTTS
@@ -64,15 +67,34 @@ async def lifespan(app: FastAPI):
     # Mini AI companion engine (fully local: Ollama + SQLite).
     try:
         from core.companion.runtime import build_engine
+
         app.state.companion = build_engine()
         log.info("companion.ready", model=get_settings().companion_model)
     except Exception as e:
         log.warning("companion.init_failed", error=str(e))
         app.state.companion = None
 
+    # Continuous Presence keeps a real node identity + heartbeat and receives
+    # normalized events even when Karnveer sends no message. The first read-only
+    # source watches the already-existing Mac worker bridge for actual connection
+    # transitions. Consequential actions remain outside this layer.
+    app.state.presence = get_presence_runtime()
+    await app.state.presence.start()
+    app.state.presence_source_tasks = [
+        asyncio.create_task(
+            watch_worker_presence(app.state.presence),
+            name="presence-source-worker",
+        )
+    ]
+    log.info("presence.ready", node_id=app.state.presence.node_id)
+
     yield
 
     log.info("api.shutdown")
+    for task in app.state.presence_source_tasks:
+        task.cancel()
+    await asyncio.gather(*app.state.presence_source_tasks, return_exceptions=True)
+    await app.state.presence.stop()
     await app.state.llm.aclose()
     await app.state.embedder.aclose()
     await app.state.tts.aclose()
@@ -142,7 +164,22 @@ def create_app() -> FastAPI:
     app.include_router(browser_router.router)
     app.include_router(agents_router.router)
     app.include_router(memory_router.router)
-    app.include_router(mini_router.router)
+
+    # Mini is an optional companion surface. It must never be able to take the
+    # Vault/memory/presence API down just because one optional Mini module is
+    # missing or broken. We expose the real availability in `/status` below.
+    try:
+        from apps.api.routers import mini as mini_router
+
+        app.include_router(mini_router.router)
+        app.state.mini_router_available = True
+        app.state.mini_router_error = None
+    except Exception as exc:
+        app.state.mini_router_available = False
+        app.state.mini_router_error = f"{type(exc).__name__}: {exc}"
+        get_logger("api").warning("mini.router_unavailable", error=app.state.mini_router_error)
+
+    app.include_router(presence_router.router)
     app.include_router(settings_router.router)
     app.include_router(worker_router.router)
     app.include_router(vault_router.router)
@@ -212,6 +249,13 @@ def create_app() -> FastAPI:
             "llm_model": settings.llm_model,
             "stt_provider": settings.stt_provider,
             "auth_enabled": bool(settings.vault_api_key),
+            "presence": get_presence_runtime().status(),
+            "optional_components": {
+                "mini_router": {
+                    "available": bool(getattr(app.state, "mini_router_available", False)),
+                    "error": getattr(app.state, "mini_router_error", None),
+                }
+            },
             "connectors": sorted(installed),
             "experts": {
                 "online": sorted(f"ask_{n}" for n in online),
