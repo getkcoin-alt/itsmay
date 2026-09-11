@@ -23,6 +23,7 @@ from core.vault.continuity_crypto import (
     inspect_encrypted_header,
     write_encrypted_private_capsule,
 )
+from core.vault.conversation_ingest import ConversationIngestReport, ConversationTurn
 from core.vault.schema import (
     Directive,
     Episode,
@@ -184,6 +185,49 @@ def test_encrypted_private_capsule_round_trip(tmp_path: Path) -> None:
     assert manifest["includes_raw_episodes"] is True
     history = (restored / "memory" / "episodic.jsonl").read_text(encoding="utf-8")
     assert "remember the continuity rule" in history
+
+
+def test_encrypted_capsule_carries_normalized_external_conversation(tmp_path: Path) -> None:
+    pytest.importorskip("cryptography")
+    report = ConversationIngestReport(
+        source_path="/private/conversations.json",
+        conversations=1,
+        turns=[
+            ConversationTurn(
+                id="conv:turn",
+                conversation_id="conv",
+                title="North Star",
+                role="user",
+                content="🧬🕳️⚙️",
+                source_sha256="a" * 64,
+            )
+        ],
+    )
+    encrypted = write_encrypted_private_capsule(
+        _bundle(),
+        tmp_path / "scrappy-with-export.enc",
+        spec=_spec(),
+        passphrase="correct horse battery staple",
+        conversation_report=report,
+    )
+
+    restored_root = decrypt_private_capsule(
+        encrypted,
+        tmp_path / "restored-export",
+        passphrase="correct horse battery staple",
+    )
+    restored = restored_root / "scrappy-continuity"
+    integrity = verify_capsule(restored)
+    assert integrity.ok is True
+
+    manifest = json.loads((restored / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["counts"]["external_conversation_turns"] == 1
+    turns = (restored / "conversation" / "turns.jsonl").read_text(encoding="utf-8")
+    assert "🧬🕳️⚙️" in turns
+    provenance = (restored / "provenance" / "conversation_sources.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert '"source_sha256": "aaaaaaaa' in provenance
 
 
 def test_wrong_passphrase_never_extracts_private_capsule(tmp_path: Path) -> None:
