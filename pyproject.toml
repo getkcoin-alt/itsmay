@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 scrappy = "apps.cli:main"
+scrappy-continuity = "apps.cli.continuity:main"
 mini = "apps.mini:main"
 
 [project.optional-dependencies]
