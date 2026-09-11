@@ -9,8 +9,9 @@ Examples:
 
     scrappy-continuity backup --out ~/.itsmay/backups/scrappy.enc
     scrappy-continuity backup --conversation-export ~/Downloads/conversations.json
-    scrappy-continuity inspect-export ~/Downloads/conversations.json
     scrappy-continuity verify-encrypted ~/.itsmay/backups/scrappy.enc
+    scrappy-continuity restore ~/.itsmay/backups/scrappy.enc        # dry run
+    scrappy-continuity restore ~/.itsmay/backups/scrappy.enc --apply
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ from core.vault.conversation_ingest import (
     UnsupportedConversationExport,
     ingest_conversation_export,
 )
-from core.vault.transport import extract_vault_archive
+from core.vault.transport import extract_vault_archive, write_vault_archive
 
 load_dotenv()
 load_dotenv(Path.home() / ".itsmay" / "config.env")
@@ -95,6 +96,25 @@ def _download_vault_archive(target: Path, *, include_episodes: bool) -> Path:
                 for chunk in response.iter_bytes(1024 * 1024):
                     fh.write(chunk)
     return target
+
+
+def _upload_vault_archive(archive: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Upload one validated Vault transport tar to an authenticated restore host."""
+    with archive.open("rb") as fh, httpx.Client(
+        headers=_headers(), timeout=300, follow_redirects=True
+    ) as client:
+        response = client.post(
+            f"{API_BASE}/v1/vault/import/archive",
+            params={"dry_run": str(dry_run).lower()},
+            files={"archive": ("scrappy-vault.tar", fh, "application/x-tar")},
+        )
+    if response.status_code == 401:
+        raise RuntimeError("401 Unauthorized — check VAULT_API_KEY")
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("restore host returned a non-object response")
+    return data
 
 
 def _default_spec(bundle: VaultBundle) -> CapsuleSpec:
@@ -184,6 +204,45 @@ def _backup(args: argparse.Namespace) -> int:
     print(f"  bytes: {size:,}")
     print(f"  sha256: {digest}")
     print("  passphrase and conversation export stayed local; temp plaintext was removed.")
+    return 0
+
+
+def _restore(args: argparse.Namespace) -> int:
+    """Verify an encrypted capsule and restore its embedded canonical Vault bundle."""
+    source = Path(args.path).expanduser()
+    dry_run = not args.apply
+    passphrase = _passphrase(confirm=False)
+    try:
+        with tempfile.TemporaryDirectory(prefix="scrappy-restore-") as tmp:
+            tmp_root = Path(tmp)
+            root = decrypt_private_capsule(source, tmp_root / "capsule", passphrase=passphrase)
+            capsule = root / "scrappy-continuity"
+            integrity = verify_capsule(capsule)
+            if not integrity.ok:
+                raise RuntimeError(
+                    "capsule integrity failed: " + json.dumps(integrity.to_dict(), sort_keys=True)
+                )
+
+            vault_dir = capsule / "vault_bundle"
+            if not vault_dir.is_dir():
+                raise RuntimeError("capsule has no embedded importable vault_bundle")
+            bundle = VaultBundle.read(vault_dir)
+            transport = write_vault_archive(
+                bundle,
+                tmp_root / "restore-vault.tar",
+                tmp_root / "transport-work",
+            )
+            mode = "APPLY" if args.apply else "DRY RUN"
+            print(f"{mode}: sending verified Vault bundle to {API_BASE} …")
+            result = _upload_vault_archive(transport, dry_run=dry_run)
+    finally:
+        passphrase = ""
+
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    if dry_run:
+        print("No Vault records were changed. Re-run with --apply only after reviewing this report.")
+    else:
+        print("✓ restore host accepted the Vault import.")
     return 0
 
 
@@ -288,6 +347,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     backup.add_argument("--no-episodes", action="store_true", help="omit raw Vault episodes")
     backup.set_defaults(func=_backup)
+
+    restore = sub.add_parser("restore", help="verify capsule and restore embedded Vault")
+    restore.add_argument("path")
+    restore.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually mutate the restore host; default is a dry run",
+    )
+    restore.set_defaults(func=_restore)
 
     export = sub.add_parser("inspect-export", help="show local conversation-export counts only")
     export.add_argument("path")
