@@ -53,6 +53,56 @@ pip install -e ".[continuity]"
 
 The passphrase is never written to Git, the capsule, the Vault manifest, or logs.
 
+## Operator workflow
+
+The local operator command is intentionally separate from the cloud API:
+
+```bash
+scrappy-continuity make-spec
+scrappy-continuity backup
+scrappy-continuity verify-encrypted ~/.itsmay/backups/scrappy-continuity-<timestamp>.enc
+```
+
+`backup` performs this chain:
+
+```text
+live Vault Zeta
+    ↓ authenticated HTTPS
+/v1/vault/export/archive
+    ↓ ephemeral plaintext tar on operator machine
+safe VaultBundle validation
+    ↓
+local continuity spec + optional conversation export
+    ↓
+AES-256-GCM encrypted .enc capsule
+    ↓
+temporary plaintext removed
+```
+
+The cloud endpoint never receives the continuity passphrase. The streamed Vault tar is not itself a backup; the server deletes its temporary copy after the response and the local CLI handles its copy inside a temporary directory.
+
+## ChatGPT conversation export ingestion
+
+A local `conversations.json` can be included without uploading it back to Vault Zeta or another model provider:
+
+```bash
+scrappy-continuity inspect-export ~/Downloads/conversations.json
+scrappy-continuity backup \
+  --conversation-export ~/Downloads/conversations.json \
+  --out ~/.itsmay/backups/scrappy-full.enc
+```
+
+The parser:
+
+- runs locally with no model/network call;
+- follows the active `current_node` parent chain where available so abandoned branches are not mixed into the primary transcript;
+- preserves message role, title, timestamps, source-node IDs and SHA-256 provenance;
+- masks narrow credential-shaped values before they enter the capsule;
+- stores normalized turns only inside the encrypted-private layer;
+- reports counts without printing conversation text in `inspect-export`.
+
+This first parser targets ChatGPT-style JSON exports. Export formats can change, so unsupported structures fail explicitly instead of being guessed into memory.
+
 ## Restore contract
 
 A restore consumer must:
@@ -108,12 +158,29 @@ The fresh model may differ in style or capability. Continuity means reproducible
 ## Security rules
 
 - Never commit plaintext conversation exports to this public repository.
-- Never place API keys, bearer tokens, passwords, private keys, or credential-shaped values in a capsule.
+- Never place API keys, bearer tokens, passwords, private keys, or credential-shaped values in a capsule; the local conversation parser masks the narrow credential shapes it recognizes.
 - Secret references may be named; secret values stay in the host's secret store.
 - A modified encrypted archive must fail AES-GCM authentication.
 - A modified plaintext capsule must fail SHA-256 verification.
+- The streamed server tar is plaintext private transport and must remain ephemeral.
 - Consequential actions after restore still pass current policy/approval controls.
 
 ## Current implementation status
 
-This first slice implements the capsule schema/writer, public-safe export behavior, integrity verification, provider-neutral bootstrap, encrypted private envelope, safe extraction, and targeted tests. Conversation-export ingestion, CLI commands, automatic backup destinations, and the full clean-environment recovery drill are subsequent slices.
+Implemented in the continuity branch:
+
+- capsule schema/writer and public-safe export behavior;
+- SHA-256 integrity verification and provider-neutral bootstrap;
+- encrypted private AES-256-GCM/scrypt envelope;
+- safe tar extraction and authenticated Vault archive transport;
+- protected `/v1/vault/export/archive` transport endpoint;
+- local `scrappy-continuity` backup/verify/decrypt/inspect/spec commands;
+- local ChatGPT JSON export normalization with provenance and credential masking;
+- targeted CI tests for tampering, wrong passphrases, archive traversal, branch selection and export redaction.
+
+Still required before Issue #30 is complete:
+
+- a real operator-owned encrypted backup destination beyond the local `.enc` file;
+- distilled relationship/project summaries derived from the private raw export with explicit provenance;
+- clean-environment restore into a fresh Vault/model provider;
+- continuity eval execution and a documented disaster-recovery drill.
