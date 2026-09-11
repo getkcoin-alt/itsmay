@@ -24,6 +24,7 @@ from typing import BinaryIO
 
 from core.vault.bundle import VaultBundle
 from core.vault.continuity import CapsuleSpec, write_private_staging_capsule
+from core.vault.conversation_ingest import ConversationIngestReport, augment_private_capsule
 
 _MAGIC = b"SCRAPPY-CONTINUITY-ENC1\n"
 _TAG_BYTES = 16
@@ -59,8 +60,14 @@ def write_encrypted_private_capsule(
     *,
     spec: CapsuleSpec,
     passphrase: str,
+    conversation_report: ConversationIngestReport | None = None,
 ) -> Path:
-    """Build a private capsule and write one authenticated encrypted file."""
+    """Build a private capsule and write one authenticated encrypted file.
+
+    ``conversation_report`` is already-normalized local export data. When
+    supplied it is added only to the ephemeral private staging directory and is
+    therefore covered by both per-file SHA-256 and the outer AES-GCM envelope.
+    """
     if len(passphrase) < 12:
         raise ValueError("continuity passphrase must be at least 12 characters")
 
@@ -78,6 +85,8 @@ def write_encrypted_private_capsule(
             spec=spec,
             encrypted_destination=True,
         )
+        if conversation_report is not None:
+            augment_private_capsule(staging, conversation_report)
         _pack_tar(staging, tar_path)
         _encrypt_file(tar_path, output_path, passphrase)
 
