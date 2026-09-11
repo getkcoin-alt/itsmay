@@ -176,7 +176,9 @@ def _ingest_chatgpt_conversation(
         report.warnings.append(f"{fallback_id}: no ChatGPT-style mapping; ignored")
         return
 
-    conversation_id = str(conversation.get("id") or conversation.get("conversation_id") or fallback_id)
+    conversation_id = str(
+        conversation.get("id") or conversation.get("conversation_id") or fallback_id
+    )
     title = str(conversation.get("title") or "")
     node_ids = _active_node_ids(mapping, conversation.get("current_node"))
     for node_id in node_ids:
