@@ -10,6 +10,7 @@ on:
       - "core/vault/continuity_crypto.py"
       - "core/vault/transport.py"
       - "apps/api/routers/vault.py"
+      - "apps/cli/continuity.py"
       - "tests/test_continuity_capsule.py"
       - "tests/test_vault_transport.py"
       - "pyproject.toml"
@@ -32,9 +33,12 @@ jobs:
       - name: Import API
         run: |
           python -c "import apps.api.main; print('api import ok')"
+      - name: CLI smoke test
+        run: |
+          scrappy-continuity --help
       - name: Targeted tests
         run: |
           pytest -q tests/test_continuity_capsule.py tests/test_vault_transport.py
       - name: Ruff
         run: |
-          ruff check core/vault/continuity.py core/vault/continuity_crypto.py core/vault/transport.py apps/api/routers/vault.py tests/test_continuity_capsule.py tests/test_vault_transport.py
+          ruff check core/vault/continuity.py core/vault/continuity_crypto.py core/vault/transport.py apps/api/routers/vault.py apps/cli/continuity.py tests/test_continuity_capsule.py tests/test_vault_transport.py
