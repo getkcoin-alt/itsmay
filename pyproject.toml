@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 scrappy = "apps.cli:main"
+scrappy-continuity = "apps.cli.continuity:main"
 mini = "apps.mini:main"
 
 [project.optional-dependencies]
@@ -47,6 +48,9 @@ gmail = [                                    # Gmail connector (set GOOGLE_CREDE
     "google-auth-httplib2>=0.2",
     "google-auth-oauthlib>=1.2",
 ]
+# Private continuity archives. Kept optional so the production API does not pull
+# crypto code unless the operator uses encrypted backup/restore on that host.
+continuity = ["cryptography>=43"]
 
 dev = [
     "ruff>=0.7",
