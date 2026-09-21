@@ -38,6 +38,7 @@ COPY --from=build /install /usr/local
 COPY pyproject.toml ./
 COPY core ./core
 COPY apps/api ./apps/api
+COPY apps/mcp ./apps/mcp
 COPY apps/__init__.py ./apps/__init__.py
 COPY infra/migrations ./infra/migrations
 
