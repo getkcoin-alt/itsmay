@@ -22,6 +22,7 @@ from apps.api.routers import settings as settings_router
 from apps.api.routers import vault as vault_router
 from apps.api.routers import voice as voice_router
 from apps.api.routers import worker as worker_router
+from apps.mcp.server import create_memory_mcp_http_app, create_memory_mcp_server
 from core.brain.llm import LLMClient
 from core.config import get_settings
 from core.logging import configure_logging, get_logger
@@ -31,6 +32,7 @@ from core.memory.embedder import Embedder
 from core.memory.episodic import EpisodicStore
 from core.memory.migrate import run_migrations
 from core.memory.semantic import SemanticStore
+from core.memory.service import MemoryService
 from core.memory.sqlite_store import SqliteEpisodicStore, SqliteSemanticStore, ensure_schema
 from core.presence.runtime import get_presence_runtime
 from core.presence.sources import watch_worker_presence
@@ -88,20 +90,30 @@ async def lifespan(app: FastAPI):
     ]
     log.info("presence.ready", node_id=app.state.presence.node_id)
 
-    yield
-
-    log.info("api.shutdown")
-    for task in app.state.presence_source_tasks:
-        task.cancel()
-    await asyncio.gather(*app.state.presence_source_tasks, return_exceptions=True)
-    await app.state.presence.stop()
-    await app.state.llm.aclose()
-    await app.state.embedder.aclose()
-    await app.state.tts.aclose()
-    await app.state.stt.aclose()
-    close_redis()
-    if backend == "postgres":
-        await close_pool()
+    # Mounted ASGI apps do not receive their own lifespan events. The parent API
+    # therefore owns the MCP session manager as part of the same runtime lifecycle
+    # as memory and Continuous Presence.
+    mcp_server = getattr(app.state, "memory_mcp_server", None)
+    try:
+        if mcp_server is not None:
+            async with mcp_server.session_manager.run():
+                log.info("mcp.ready", endpoint="/mcp/")
+                yield
+        else:
+            yield
+    finally:
+        log.info("api.shutdown")
+        for task in app.state.presence_source_tasks:
+            task.cancel()
+        await asyncio.gather(*app.state.presence_source_tasks, return_exceptions=True)
+        await app.state.presence.stop()
+        await app.state.llm.aclose()
+        await app.state.embedder.aclose()
+        await app.state.tts.aclose()
+        await app.state.stt.aclose()
+        close_redis()
+        if backend == "postgres":
+            await close_pool()
 
 
 def _inject_site_verification(html: str, token: str) -> str:
@@ -138,7 +150,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="Vault Zeta Node SSN-92C",
-        version="0.1.0",
+        version="0.2.0",
         description="Scrappy Singh — sovereign personal AI operator",
         lifespan=lifespan,
     )
@@ -146,7 +158,7 @@ def create_app() -> FastAPI:
     # Bearer-token guard. The console UI shell (/, /static, /status) stays open
     # so the page can load and prompt for the key; the health routes (/v1/live,
     # /v1/health) are open for the platform + monitoring; every /v1 data endpoint
-    # stays protected.
+    # and the /mcp/ continuity surface stay protected.
     app.add_middleware(
         BearerAuthMiddleware,
         token=settings.vault_api_key,
@@ -184,6 +196,18 @@ def create_app() -> FastAPI:
     app.include_router(worker_router.router)
     app.include_router(vault_router.router)
 
+    # One memory, many AI hosts. MCP closes over the same live stores and embedder
+    # used by Scrappy itself; there is no MCP-only database or continuity fork.
+    def _memory_service() -> MemoryService:
+        if not hasattr(app.state, "episodic"):
+            raise RuntimeError("Vault Zeta memory is not ready yet")
+        return MemoryService(app.state.episodic, app.state.semantic, app.state.embedder)
+
+    memory_mcp_server = create_memory_mcp_server(_memory_service)
+    memory_mcp_app = create_memory_mcp_http_app(memory_mcp_server)
+    app.state.memory_mcp_server = memory_mcp_server
+    app.mount("/mcp", memory_mcp_app, name="vault-zeta-mcp")
+
     static_dir = Path(__file__).parent / "static"
     index_html = static_dir / "index.html"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -204,7 +228,8 @@ def create_app() -> FastAPI:
         sitemap_url = str(request.base_url).rstrip("/") + "/sitemap.xml"
         body = (
             "User-agent: *\n"
-            "Disallow: /v1/\n"  # keep crawlers out of the API surface
+            "Disallow: /v1/\n"
+            "Disallow: /mcp/\n"
             "Allow: /\n"
             f"Sitemap: {sitemap_url}\n"
         )
@@ -249,6 +274,12 @@ def create_app() -> FastAPI:
             "llm_model": settings.llm_model,
             "stt_provider": settings.stt_provider,
             "auth_enabled": bool(settings.vault_api_key),
+            "mcp": {
+                "enabled": True,
+                "transport": "streamable-http",
+                "endpoint": "/mcp/",
+                "shared_memory": True,
+            },
             "presence": get_presence_runtime().status(),
             "optional_components": {
                 "mini_router": {

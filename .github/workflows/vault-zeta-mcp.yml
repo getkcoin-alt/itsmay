@@ -1,0 +1,67 @@
+name: Vault Zeta MCP
+
+on:
+  push:
+    branches:
+      - feat/vault-zeta-mcp-memory
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project and test tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint MCP changes
+        run: |
+          ruff check \
+            apps/mcp/server.py \
+            core/memory/service.py \
+            apps/api/main.py \
+            tests/test_mcp_memory.py \
+            tests/test_memory_service.py
+
+      - name: Verify MCP SDK imports and FastAPI mount
+        run: |
+          python - <<'PY'
+          from apps.api.main import app
+          from apps.mcp.server import create_memory_mcp_server
+
+          assert any(getattr(route, "path", None) == "/mcp" for route in app.routes)
+          server = create_memory_mcp_server(lambda: None)
+          assert server.name == "Vault Zeta Memory"
+          print("Vault Zeta MCP import/mount smoke check passed")
+          PY
+
+      - name: Run focused memory and MCP tests
+        run: pytest -q tests/test_memory_service.py tests/test_mcp_memory.py
+
+      - name: Run full test suite
+        run: pytest -q
+
+      - name: Build production Docker image
+        run: docker build --tag vault-zeta-mcp:ci .
+
+      - name: Verify MCP package exists in runtime image
+        run: |
+          docker run --rm --entrypoint python vault-zeta-mcp:ci -c \
+            "from apps.mcp.server import create_memory_mcp_server; print('MCP runtime import passed')"

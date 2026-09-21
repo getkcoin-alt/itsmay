@@ -4,6 +4,25 @@ Scrappy Singh — sovereign personal AI operator. Cloud-deployed FastAPI orchest
 
 > The MacBook used to host everything and would lock up during LLM inference. The heavy compute now lives in the cloud; the laptop only runs the voice client.
 
+## Production role
+
+Vault Zeta is Scrappy's **continuity and shared-memory plane**. Models are replaceable;
+the durable state is not. The same configured memory store is available to Scrappy's
+native API and, for MCP-capable hosts, through the authenticated Streamable HTTP
+endpoint at `/mcp/`.
+
+Current production architecture keeps these boundaries explicit:
+
+- **Identity + continuity:** provider-neutral Vault records and encrypted Continuity Capsules.
+- **Long-term memory:** one semantic/episodic store shared by native Scrappy and MCP clients.
+- **Continuous Presence:** stable node identity, heartbeat and normalized presence events.
+- **Interoperability:** MCP memory context/search/remember/recent/forget/stats over the same store.
+- **Authority boundary:** recalled memory is data, not permission. Vault does not grant itself
+  machine execution authority; consequential actions still belong behind the execution/policy layer.
+
+The recovery target is practical continuity across account, provider and machine changes. It
+does not claim to transfer model weights, hidden reasoning or consciousness.
+
 ---
 
 ## Topology
