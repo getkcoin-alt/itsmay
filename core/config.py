@@ -156,6 +156,13 @@ class Settings(BaseSettings):
     mission_target_date: date = date(2026, 11, 23)
     mission_statement: str = "Achieve financial freedom"
 
+    # ── Initiative / durable goals ───────────────────────────────
+    # Scrappy may infer ONE bounded next TODO when the active operator goal has
+    # no unresolved task. This is planning only; tool execution stays behind the
+    # existing approval/policy boundary. Disable instantly with INITIATIVE_ENABLED=false.
+    initiative_enabled: bool = True
+    initiative_interval_seconds: float = 90.0
+
     # ── Self-modification (Epic 5) ────────────────────────────────
     # Master switch for Scrappy changing his own code. On by default, but every
     # change still passes the guardrails (core/identity/self_guard.py) — protected
