@@ -15,6 +15,7 @@ from apps.api.routers import agents as agents_router
 from apps.api.routers import browser as browser_router
 from apps.api.routers import chat as chat_router
 from apps.api.routers import console as console_router
+from apps.api.routers import goals as goals_router
 from apps.api.routers import identity as identity_router
 from apps.api.routers import memory as memory_router
 from apps.api.routers import presence as presence_router
@@ -25,6 +26,10 @@ from apps.api.routers import worker as worker_router
 from apps.mcp.server import create_memory_mcp_http_app, create_memory_mcp_server
 from core.brain.llm import LLMClient
 from core.config import get_settings
+from core.goals.manager import GoalManager
+from core.goals.planner import LLMNextStepProposer, NextStepPlanner
+from core.goals.runtime import InitiativeRuntime
+from core.goals.store import PostgresGoalStore, SqliteGoalStore
 from core.logging import configure_logging, get_logger
 from core.memory.backend import resolve_backend
 from core.memory.db import close_pool, get_pool
@@ -55,11 +60,13 @@ async def lifespan(app: FastAPI):
         path = ensure_schema(get_settings().sqlite_path)
         app.state.episodic = SqliteEpisodicStore(path)
         app.state.semantic = SqliteSemanticStore(path)
+        app.state.goal_store = SqliteGoalStore(path)
     else:
         pool = await get_pool()
         await run_migrations(pool)
         app.state.episodic = EpisodicStore()
         app.state.semantic = SemanticStore()
+        app.state.goal_store = PostgresGoalStore(pool)
 
     app.state.llm = LLMClient()
     app.state.embedder = Embedder()
@@ -90,6 +97,26 @@ async def lifespan(app: FastAPI):
     ]
     log.info("presence.ready", node_id=app.state.presence.node_id)
 
+    # Initiative gives Continuous Presence a durable operator goal and lets the
+    # replaceable cortex choose exactly one bounded next TODO when no unresolved
+    # work exists. Planning state carries no tool authority.
+    goal_manager = GoalManager(app.state.goal_store)
+    goal_planner = NextStepPlanner(goal_manager, LLMNextStepProposer(app.state.llm))
+    app.state.initiative = InitiativeRuntime(
+        goal_manager,
+        goal_planner,
+        mission_statement=get_settings().mission_statement,
+        presence=app.state.presence,
+        interval_seconds=get_settings().initiative_interval_seconds,
+        enabled=get_settings().initiative_enabled,
+    )
+    await app.state.initiative.start()
+    log.info(
+        "initiative.ready",
+        enabled=get_settings().initiative_enabled,
+        running=app.state.initiative.running,
+    )
+
     # Mounted ASGI apps do not receive their own lifespan events. The parent API
     # therefore owns the MCP session manager as part of the same runtime lifecycle
     # as memory and Continuous Presence.
@@ -106,6 +133,7 @@ async def lifespan(app: FastAPI):
         for task in app.state.presence_source_tasks:
             task.cancel()
         await asyncio.gather(*app.state.presence_source_tasks, return_exceptions=True)
+        await app.state.initiative.stop()
         await app.state.presence.stop()
         await app.state.llm.aclose()
         await app.state.embedder.aclose()
@@ -172,6 +200,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router.router)
     app.include_router(voice_router.router)
     app.include_router(console_router.router)
+    app.include_router(goals_router.router)
     app.include_router(identity_router.router)
     app.include_router(browser_router.router)
     app.include_router(agents_router.router)
