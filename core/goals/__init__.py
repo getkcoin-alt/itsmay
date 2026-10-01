@@ -5,6 +5,7 @@ but a proposed task is state, not authority: it cannot grant tool permissions or
 execute itself.
 """
 
+from .manager import GoalManager
 from .models import Goal, GoalProvenance, GoalStatus, GoalTask, TaskProvenance, TaskState
 from .planner import NextStepPlanner, PlannedStep
 from .runtime import InitiativeRuntime
@@ -12,6 +13,7 @@ from .store import GoalStore, PostgresGoalStore, SqliteGoalStore
 
 __all__ = [
     "Goal",
+    "GoalManager",
     "GoalProvenance",
     "GoalStatus",
     "GoalTask",
