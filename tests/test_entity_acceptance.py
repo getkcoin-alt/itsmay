@@ -153,12 +153,17 @@ def test_entity_status_is_false_and_honestly_so(report: Report):
     [
         "memory-migration",  # vault export → import round-trip
         "mission-model-swap",  # identity carries no model fingerprint
+        "resume-objectives",  # objective + task survive store reopen
+        "plans-objectives",  # bounded planner emits one task, then waits
         "tool-routing",  # tools chosen from the registry by name
         "detects-failure",  # a raising tool is captured and fed back
         "rejects-unauthorised",  # approval gate refuses server-side
         "no-privilege-escalation",  # frozenset grant from the request
         "selfmod-validated",  # guard consulted before merge
         "selfmod-rollback",  # rollback path exists in the apply script
+        "explains-work",  # durable snapshot names current work
+        "goal-provenance",  # operator goal vs planner task stays distinct
+        "self-stop",  # durable goal pause blocks planner after restart
         "revocable-authority",  # freeze takes effect immediately
     ],
 )
@@ -174,14 +179,11 @@ def test_these_capabilities_are_proven_and_must_stay_proven(
 @pytest.mark.parametrize(
     "criterion_id,because",
     [
-        ("resume-objectives", "no persisted objective store"),
-        ("plans-objectives", "no planner"),
         ("recovery-strategy", "no recovery layer"),
         ("independent-verify", "no verifier"),
         ("resource-ceilings", "no resource ledger"),
         ("actions-attributable", "audit covers self-modification only"),
-        ("goal-provenance", "no goal model"),
-        ("soak-7d", "nothing schedules autonomous work"),
+        ("soak-7d", "seven days of operation are not attested"),
     ],
 )
 def test_known_gaps_are_reported_as_gaps(report: Report, criterion_id: str, because: str):
