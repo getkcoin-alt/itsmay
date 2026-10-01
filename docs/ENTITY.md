@@ -50,26 +50,33 @@ is therefore not a scolding, it is the specification for the next piece of work.
 
 ## Where Scrappy stands today
 
-**9 pass · 2 partial · 9 fail — `ENTITY_STATUS = FALSE`.**
+**14 pass · 1 partial · 5 fail — `ENTITY_STATUS = FALSE`.**
 
-Proven at runtime: memory survives migration (a real export → disk → import into
-a clean store), the identity carried between hosts names no model, tools are
-chosen from the registry by name, a failing tool is captured and fed back, the
-approval gate refuses server-side, the grant is an immutable frozenset from the
-authenticated request, self-modification consults the guard and can roll itself
-back, and freeze revokes authority immediately.
+Proven at runtime now includes durable goals: an operator-owned objective and its
+pending task survive store close → reopen, the bounded planner chooses one next
+TODO and waits instead of inventing an endless queue, goal/task provenance stays
+distinct, current work is inspectable, and a durable pause prevents the planner
+from producing new work after restart. Existing memory, tool-routing, approval,
+self-modification and revocation proofs remain in place.
 
-The gaps cluster into three missing primitives:
+The initiative runtime is deliberately **plan-only**. A planner-created TODO is
+state, not authority: it cannot call a tool, widen permissions, or mark itself
+complete. Consequential execution still belongs behind the existing approval and
+policy boundary.
+
+The remaining gaps are narrower:
 
 | Missing | Criteria it blocks |
 |---|---|
-| **A goal model** (objectives → DAG → tasks, persisted) | resume-objectives, plans-objectives, explains-work, goal-provenance, self-stop |
-| **A resource ledger** (money, compute, disk, quota) | resource-ceilings, and makes a soak observable |
+| **Recovery strategy** | recovery-strategy |
+| **Independent outcome verifier** | independent-verify |
+| **Resource ledger** (money, compute, disk, quota) | resource-ceilings |
 | **Universal audit** (actor → intent → decision → tool → result → verification) | actions-attributable |
+| **7-day attestation** | soak-7d |
 
-Plus two that follow from the above: nothing schedules autonomous work, so there
-is no soak to attest; and the persona is still hand-authored beside the vault
-rather than derived from it, so two hosts can drift.
+The L2 identity criterion also remains partial: identity rides in the Vault, but
+the persona prompt is still hand-authored beside it rather than generated from
+the durable identity record.
 
 ## Adding or changing a criterion
 

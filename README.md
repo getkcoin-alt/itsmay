@@ -256,8 +256,9 @@ That's it — `ask_<name>` appears in Scrappy's toolbox automatically.
 6. ✓ Gmail connector → Email expert
 7. ✓ Web console (chat + memory browser + system status + guide)
 8. Calendar connector → calendar expert
-9. Goals/tasks + planner/executor expert
-10. Critic + Learner + nightly memory consolidation
+9. ✓ Durable goals/tasks + bounded next-step initiative (plan-only; execution remains policy-gated)
+10. Goal-task executor + independent verification/audit
+11. Critic + Learner + nightly memory consolidation
 
 ## Copyright & Credits
 
