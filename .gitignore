@@ -10,3 +10,20 @@ uv.lock
 .ruff_cache/
 .pytest_cache/
 data/
+
+# Local scratch / test files
+.claude/
+src/
+fetcher.jsx
+patch_app.js
+patch_elevenlabs.py
+patch_mini.py
+rc_server_v2.py
+rewrite_mini_face.py
+test_pcm.py
+test_query.py
+test_stt.py
+test_ws.py
+update_elevenlabs.py
+update_prompt.py
+update_prompt_english.py
