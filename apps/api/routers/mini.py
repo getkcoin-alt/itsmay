@@ -1,4 +1,4 @@
-"""Mini AI companion — web chat endpoint.
+"""Mini AI companion — web chat endpoint (automated CI/CD enabled).
 
 Wraps the fully-local CompanionEngine for text-based 1:1 chat over SSE.
 Unlike the terminal voice loop (which gates on nickname address), every web
