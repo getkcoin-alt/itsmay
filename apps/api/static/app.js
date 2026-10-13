@@ -1,13 +1,28 @@
 /* Vault Zeta console — vanilla SPA.
  * Same-origin API, auth via Bearer token in localStorage.
  * SSE uses fetch + ReadableStream so we can set Authorization
- * (EventSource can't). Markdown is rendered after streaming completes.
- *
- * Designed & Developed by Karnveer Singh — https://www.karnveer.com
- * © 2026 Karnveer Singh. */
+ * (EventSource can't). Markdown is rendered after streaming completes. */
 
 const KEY_NAME     = "vault_api_key";
 const SESSION_NAME = "vault_session_id";
+
+// Tenant unique-URL mode: "/u/<slug>" is one onboarded person's own Mini —
+// own memory, own voice ID, own PIN — sharing this one deployment. Detected
+// once from the path; every /v1/mini/* call and the stored "API key" (their
+// PIN) get scoped to it for the rest of the session. Absent entirely on the
+// legacy console / gift-device ("/miniai") paths — those behave exactly as
+// before, using the single global key under KEY_NAME.
+const TENANT_SLUG = (() => {
+  const m = location.pathname.match(/^\/u\/([a-z0-9][a-z0-9-]{0,63})\/?$/);
+  return m ? m[1] : null;
+})();
+const TENANT_PIN_KEY = TENANT_SLUG ? `mini_pin_${TENANT_SLUG}` : null;
+
+// Build a "/v1/mini/..." path, routed to this tenant's own scoped surface
+// when TENANT_SLUG is set, else the legacy global surface (unchanged).
+function miniPath(suffix) {
+  return TENANT_SLUG ? `/v1/mini/t/${TENANT_SLUG}${suffix}` : `/v1/mini${suffix}`;
+}
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, txt) => {
@@ -17,9 +32,43 @@ const el = (tag, cls, txt) => {
   return e;
 };
 
+
+// ── audio context ────────────────────────────────────────────────
+let audioCtx = null;
+let _audioUnlocked = false;
+function initAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  // iOS only unlocks Web Audio inside a user gesture. Play a 1-sample silent
+  // buffer once so the streamed PCM (played via createBufferSource later, off
+  // the gesture) is actually audible. Must be called from a tap/keydown.
+  if (!_audioUnlocked) {
+    try {
+      const buf = audioCtx.createBuffer(1, 1, 22050);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioCtx.destination);
+      src.start(0);
+      _audioUnlocked = true;
+    } catch (e) { /* ignore — will retry next gesture */ }
+  }
+}
+
 // ── auth / fetch ──────────────────────────────────────────────────
-const getKey = () => localStorage.getItem(KEY_NAME) || "";
-const setKey = (k) => k ? localStorage.setItem(KEY_NAME, k) : localStorage.removeItem(KEY_NAME);
+// In tenant mode the "API key" IS that person's PIN, stored under a
+// slug-namespaced key so testing multiple tenant links from one browser
+// never clobbers another's — everything else (api(), the key modal, 401
+// handling) works unchanged since it only ever calls getKey()/setKey().
+const getKey = () =>
+  localStorage.getItem(TENANT_SLUG ? TENANT_PIN_KEY : KEY_NAME) || "";
+const setKey = (k) => {
+  const name = TENANT_SLUG ? TENANT_PIN_KEY : KEY_NAME;
+  if (k) localStorage.setItem(name, k); else localStorage.removeItem(name);
+};
 
 function authHeaders(extra = {}) {
   const k = getKey();
@@ -33,8 +82,14 @@ async function api(path, opts = {}) {
   });
   if (res.status === 401) {
     setConn(false);
-    openModal("Unauthorized — set a valid API key.");
+    openModal(TENANT_SLUG ? "Wrong PIN — try again." : "Unauthorized — set a valid API key.");
     throw new Error("unauthorized");
+  }
+  if (TENANT_SLUG && res.status === 404) {
+    // The slug itself doesn't exist — not a wrong PIN, a bad/typo'd link.
+    setConn(false);
+    openModal("This Mini link isn't valid.");
+    throw new Error("invalid tenant link");
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -868,7 +923,16 @@ $("#modal").addEventListener("click", (e) => {
 $("#key-save").addEventListener("click", async () => {
   setKey($("#key-input").value.trim());
   $("#modal").hidden = true;
-  toast("Key saved.");
+  toast(TENANT_SLUG ? "PIN saved." : "Key saved.");
+  loaded.mini = false;  // the very first load (before a PIN/key existed) may have 401'd
+  if (TENANT_SLUG) {
+    // Tenant mode only ever talks to Mini's own tenant-scoped endpoints —
+    // /v1/console/identity and friends use the GLOBAL key and would just
+    // 401 on a tenant PIN, reopening this very modal.
+    loadMini();
+    loaded.mini = true;
+    return;
+  }
   await loadIdentity();
   loaded.system = false;
   loaded.memory = false;
@@ -877,6 +941,7 @@ $("#key-save").addEventListener("click", async () => {
       ?.dataset.tab;
   if (activeTab === "system") { loadSystem(); loaded.system = true; }
   if (activeTab === "memory") { loadMemory(); loaded.memory = true; }
+  if (activeTab === "mini") { loadMini(); loaded.mini = true; }
 });
 
 $("#key-clear").addEventListener("click", () => {
@@ -887,8 +952,80 @@ $("#key-clear").addEventListener("click", () => {
 });
 
 // ── boot ──────────────────────────────────────────────────────────
-loadIdentity();
-chatInput.focus();
+// PWA: register the service worker (served from / by main.py so its scope
+// covers the whole app). After `load` so it never competes with startup.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
+
+// Home-screen launches use the manifest start_url (/?app=mini) — honor
+// ?app=<tab> as a deep link, with standalone display mode as a fallback,
+// so Khushi opens the installed app straight onto the face.
+const IS_STANDALONE =
+  window.navigator.standalone === true ||
+  (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+const bootTab =
+  new URLSearchParams(location.search).get("app") ||
+  (IS_STANDALONE ? "mini" : null);
+if (bootTab && bootTab !== "chat" && document.getElementById(`panel-${bootTab}`)) {
+  switchTab(bootTab);
+}
+
+// Dedicated ("gift") mode: hide every tab but Mini, land on the face, dress
+// the app in pink, and turn the "API key" modal into a plain PIN prompt.
+// Two independent triggers land here:
+//   - the server says this whole deployment is Mini-only (legacy gift device)
+//   - the URL itself is a tenant's unique "/u/<slug>" link — always this
+//     experience, regardless of the server's global mini_only setting, since
+//     one shared deployment can host tenant links alongside a normal console.
+function applyMiniOnlyBranding(ownerHeartLine) {
+  document.body.classList.add("mini-only");
+  switchTab("mini");
+  const t = document.querySelector(".mobile-title");
+  if (t) t.textContent = "Mini";
+  const heart = document.querySelector(".mini-made-for");
+  if (heart) heart.textContent = ownerHeartLine;
+  document.querySelectorAll(".brand-avatar, .mini-avatar").forEach((el) => {
+    el.textContent = "💗";
+  });
+  // The key modal becomes a simple PIN prompt.
+  const keyTitle = document.querySelector("#modal .modal-head h3");
+  if (keyTitle) keyTitle.textContent = "PIN";
+  const keyHelp = document.querySelector("#modal .helper-text");
+  if (keyHelp) keyHelp.textContent = "Enter the PIN to unlock Mini.";
+  const keyInput = document.getElementById("key-input");
+  if (keyInput) { keyInput.placeholder = "PIN"; keyInput.inputMode = "numeric"; }
+  const keySave = document.getElementById("key-save");
+  if (keySave) keySave.textContent = "Unlock";
+}
+
+if (TENANT_SLUG) {
+  applyMiniOnlyBranding("made with 💗 for you");
+} else if (bootTab === "mini") {
+  applyMiniOnlyBranding("made with 💛 for Khushi");
+} else {
+  (async () => {
+    try {
+      const s = await fetch("/status").then((r) => r.json());
+      if (s.mini_only) {
+        const owner = s.mini_owner_name || "Khushi";
+        applyMiniOnlyBranding(`made with 💛 for ${owner}`);
+      }
+    } catch (e) { /* status unreachable — normal console mode */ }
+  })();
+}
+
+// /v1/console/identity belongs to the Scrappy console, not Mini — it's
+// gated by the GLOBAL VAULT_API_KEY, never by a tenant's own PIN. Calling it
+// in tenant mode would always 401 (wrong "key") and keep reopening the PIN
+// modal the user just closed. Skip it entirely when a tenant slug is active.
+if (!TENANT_SLUG) loadIdentity();
+// Autofocus pops the software keyboard on touch devices — desktop chat only.
+if (!bootTab && !TENANT_SLUG && !("ontouchstart" in window) && navigator.maxTouchPoints === 0) {
+  chatInput.focus();
+}
 
 
 // ── Mini AI Voice Interface ────────────────────────────────────────
@@ -898,6 +1035,206 @@ const miniVoiceSubtitle = $("#mini-voice-subtitle");
 const miniAvatarContainer = $("#mini-avatar-container");
 const miniPttBtn = $("#mini-ptt-btn");
 let currentPersona = "friend";
+
+// Idle hint: phones have no spacebar — say so.
+const IS_TOUCH = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+const IDLE_STATUS = IS_TOUCH ? "Hold the button to talk" : "Hold spacebar or button to talk";
+if (miniVoiceStatus) miniVoiceStatus.textContent = IDLE_STATUS;
+
+// Emotions the face understands. The backend streams a structured `emotion`
+// event (from the LLM's JSON) before the spoken text — "neutral" maps to idle.
+const FACE_EMOTIONS = new Set([
+  "happy", "excited", "laughing", "sad", "surprised", "thinking",
+]);
+function applyEmotion(name) {
+  if (typeof miniFace === "undefined" || !miniFace) return;
+  const e = (name || "").toLowerCase();
+  miniFace.setEmotion(FACE_EMOTIONS.has(e) ? e : "idle");
+}
+
+// ── Voice recognition (speaker-ID) ───────────────────────────────────
+// The recognized speaker for this session. Sent to chat so Mini talks to the
+// right person and loads *their* memory. Persisted so a reload stays warm until
+// the next utterance re-confirms by voice.
+const MINI_PROFILE_KEY = "mini_profile_id";
+const VOICE_CONSENT_KEY = "mini_voice_consent";
+let currentMiniProfileId = localStorage.getItem(MINI_PROFILE_KEY) || null;
+let voiceReadyAnnounced = false;
+let pendingVoiceAnnounce = false;  // ask Mini to say "I recognize you now" next turn
+
+function setMiniProfile(id) {
+  currentMiniProfileId = id || null;
+  if (id) localStorage.setItem(MINI_PROFILE_KEY, id);
+  else localStorage.removeItem(MINI_PROFILE_KEY);
+}
+const voiceConsent = () => localStorage.getItem(VOICE_CONSENT_KEY) === "1";
+function setVoiceConsent(on) {
+  if (on) localStorage.setItem(VOICE_CONSENT_KEY, "1");
+  else localStorage.removeItem(VOICE_CONSENT_KEY);
+}
+
+// Reflect who Mini thinks it's talking to (and voice-learning progress).
+function updateIdentityChip(info) {
+  const chip = $("#mini-identity");
+  if (!chip) return;
+  let text = null;
+  if (info && info.person_name) {
+    text = `Talking to ${info.person_name}`;
+  } else if (info && info.voice_ready) {
+    text = "I recognize your voice now";
+  } else if (info && voiceConsent() && info.profile_id && info.samples_needed > 0) {
+    text = `Learning your voice… ${info.samples_needed} more to go`;
+  }
+  chip.textContent = text || "";
+  chip.hidden = !text;
+}
+
+// Ask consent once, the first time an unknown voice shows up.
+function maybeAskVoiceConsent(info) {
+  const bar = $("#mini-consent-bar");
+  if (!bar) return;
+  const unknown = info && info.is_new && !info.person_name;
+  bar.hidden = !(unknown && !voiceConsent());
+}
+
+// ── Recording format (iOS-safe) ──────────────────────────────────────
+// iOS Safari records audio/mp4 (AAC) — it does not support webm at all.
+// Pick the first container the browser actually supports and label the upload
+// to match, so Whisper gets a correctly-named file on every platform.
+function recorderMimeType() {
+  if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
+  for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"]) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+}
+
+function newRecorder(stream) {
+  const mime = recorderMimeType();
+  return mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+}
+
+// Blob from recorder chunks, typed with what was ACTUALLY recorded.
+function recordingBlob(chunks, recorder) {
+  const type = (recorder && recorder.mimeType) || (chunks[0] && chunks[0].type) || "audio/webm";
+  return new Blob(chunks, { type });
+}
+
+// Upload filename whose extension matches the container (Whisper keys off it).
+function uploadNameFor(blob) {
+  const t = (blob.type || "").toLowerCase();
+  if (t.includes("mp4")) return "voice.mp4";
+  if (t.includes("aac")) return "voice.aac";
+  if (t.includes("mpeg")) return "voice.mp3";
+  if (t.includes("ogg")) return "voice.ogg";
+  if (t.includes("wav")) return "voice.wav";
+  return "voice.webm";
+}
+
+// Decode a recorded audio Blob to 16 kHz mono little-endian int16 PCM (base64).
+// Done in the browser because the server has no audio decoder; the server only
+// needs PCM to compute a voiceprint.
+async function blobToPcm16Base64(blob) {
+  const arrayBuf = await blob.arrayBuffer();
+  const DecCtx = window.AudioContext || window.webkitAudioContext;
+  const tmp = new DecCtx();
+  let decoded;
+  try {
+    decoded = await new Promise((resolve, reject) => {
+      const p = tmp.decodeAudioData(arrayBuf.slice(0), resolve, reject);
+      if (p && typeof p.then === "function") p.then(resolve, reject);
+    });
+  } finally {
+    tmp.close && tmp.close();
+  }
+  const targetSr = 16000;
+  let f32;
+  try {
+    // Preferred: let the audio engine resample to 16 kHz.
+    // Some iOS versions reject OfflineAudioContext at non-hardware rates —
+    // the catch below falls back to a manual linear resample.
+    const frames = Math.ceil(decoded.duration * targetSr);
+    const off = new OfflineAudioContext(1, frames, targetSr);
+    const src = off.createBufferSource();
+    src.buffer = decoded;
+    src.connect(off.destination);
+    src.start(0);
+    const rendered = await off.startRendering();
+    f32 = rendered.getChannelData(0);
+  } catch (e) {
+    console.warn("[MiniVoiceID] offline resample unavailable, using manual", e);
+    const chan = decoded.getChannelData(0);
+    const ratio = decoded.sampleRate / targetSr;
+    const outLen = Math.floor(chan.length / ratio);
+    f32 = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const pos = i * ratio;
+      const i0 = Math.floor(pos);
+      const i1 = Math.min(i0 + 1, chan.length - 1);
+      f32[i] = chan[i0] + (chan[i1] - chan[i0]) * (pos - i0);
+    }
+  }
+  const i16 = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    const s = Math.max(-1, Math.min(1, f32[i]));
+    i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  // base64-encode the raw int16 bytes (chunked — iOS chokes on huge strings)
+  const bytes = new Uint8Array(i16.buffer);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return { pcm_base64: btoa(bin), sample_rate: targetSr };
+}
+
+// Identify the speaker from a recording — and, once the user has consented,
+// progressively learn their voice across a few turns. Best-effort: never blocks
+// the conversation if it fails.
+async function identifySpeaker(blob) {
+  try {
+    const { pcm_base64, sample_rate } = await blobToPcm16Base64(blob);
+    const body = { pcm_base64, sample_rate };
+    if (voiceConsent()) {
+      // Keep learning until Mini is confident; pass the profile we're building
+      // so samples fold into it instead of spawning duplicates.
+      body.learn = true;
+      body.consent = true;
+      if (currentMiniProfileId) body.learning_profile_id = currentMiniProfileId;
+    }
+    const info = await apiJson(miniPath("/identify"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (info.profile_id) setMiniProfile(info.profile_id);
+    else if (info.is_new) setMiniProfile(null);
+    updateIdentityChip(info);
+    maybeAskVoiceConsent(info);
+    // Toast the milestone once, when Mini first becomes sure of the voice.
+    if (info.voice_ready && !voiceReadyAnnounced) {
+      voiceReadyAnnounced = true;
+      pendingVoiceAnnounce = true;  // Mini will say it on this turn's reply
+      toast("Mini can now recognize your voice ✓");
+    }
+    return info;
+  } catch (e) {
+    console.warn("[MiniVoiceID] identify failed", e);
+    return null;
+  }
+}
+
+// Consent bar: opt in / out of voice learning.
+$("#mini-consent-yes")?.addEventListener("click", () => {
+  setVoiceConsent(true);
+  $("#mini-consent-bar").hidden = true;
+  toast("Great — I'll start learning your voice as we chat.");
+});
+$("#mini-consent-no")?.addEventListener("click", () => {
+  setVoiceConsent(false);
+  $("#mini-consent-bar").hidden = true;
+});
 
 // Audio Queue Manager for sequential playback
 // Shared audio element to bypass autoplay restrictions
@@ -910,22 +1247,28 @@ class AudioQueue {
     this.isPlaying = false;
   }
 
-  push(sentence) {
+  push(sentence, emotion = null) {
     if (!sentence.trim()) return;
-    this.queue.push(sentence);
+    this.queue.push({ text: sentence, emotion });
     this.playNext();
   }
 
   async playNext() {
     if (this.isPlaying || this.queue.length === 0) return;
     this.isPlaying = true;
-    const text = this.queue.shift();
+    const item = this.queue.shift();
+    const text = item.text;
     
-    // Show what is being spoken
+    // Show what is being spoken and sync face emotion
     miniVoiceSubtitle.textContent = text;
     miniVoiceSubtitle.hidden = false;
     miniAvatarContainer.classList.add("speaking");
     miniVoiceStatus.textContent = "Mini is speaking...";
+    
+    if (item.emotion && typeof miniFace !== 'undefined' && miniFace) {
+      miniFace.setEmotion(item.emotion);
+      console.log('[AudioQueue] Synced face emotion →', item.emotion);
+    }
 
     try {
       const token = getKey();
@@ -938,8 +1281,9 @@ class AudioQueue {
         miniAvatarContainer.classList.remove("speaking");
         this.isPlaying = false;
         if (this.queue.length === 0) {
-          miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+          miniVoiceStatus.textContent = IDLE_STATUS;
           miniVoiceSubtitle.hidden = true;
+          if (typeof miniFace !== 'undefined' && miniFace) miniFace.setEmotion('happy');
         } else {
           this.playNext();
         }
@@ -966,7 +1310,7 @@ class AudioQueue {
     sharedAudio.pause();
     this.isPlaying = false;
     miniAvatarContainer.classList.remove("speaking");
-    miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+    miniVoiceStatus.textContent = IDLE_STATUS;
     miniVoiceSubtitle.hidden = true;
   }
 }
@@ -975,11 +1319,18 @@ const ttsQueue = new AudioQueue();
 
 async function loadMini() {
   try {
-    const p = await apiJson("/v1/mini/profile");
+    const p = await apiJson(miniPath("/profile"));
     currentPersona = p.persona;
     updateMiniPersonaUI(p.persona, p.persona_title);
   } catch (e) {
     console.error("Failed to load Mini profile:", e);
+  }
+  // Restore the recognized-person chip if we enrolled/identified earlier.
+  if (currentMiniProfileId) {
+    try {
+      const who = await apiJson(`${miniPath("/profile")}?profile_id=${encodeURIComponent(currentMiniProfileId)}`);
+      if (who.person_name) updateIdentityChip({ person_name: who.person_name });
+    } catch (e) { /* stale id — ignore */ }
   }
 }
 
@@ -1000,7 +1351,7 @@ document.querySelectorAll(".persona-btn").forEach((btn) => {
     const persona = btn.dataset.persona;
     if (persona === currentPersona) return;
     try {
-      const p = await apiJson("/v1/mini/profile", {
+      const p = await apiJson(miniPath("/profile"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ persona }),
@@ -1017,24 +1368,43 @@ document.querySelectorAll(".persona-btn").forEach((btn) => {
 let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
+let isStartingRecording = false;
+let recordStartTime = 0;
+let discardNextRecording = false;
+
+async function requestAudioStream() {
+  if (window.isSecureContext === false) {
+    throw new Error("INSECURE_CONTEXT");
+  }
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+    throw new Error("UNSUPPORTED_MEDIA_DEVICES");
+  }
+  return await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    }
+  });
+}
 
 async function startRecording() {
-  if (isRecording) return;
-  
-  // Unlock audio playback on first interaction
+  if (isRecording || isStartingRecording) return;
+  isStartingRecording = true;
+  discardNextRecording = false;
+
+  // Unlock audio playback on first interaction. initAudioContext() unlocks the
+  // Web Audio pipeline (the streamed PCM path); the <audio> unlock is legacy.
+  initAudioContext();
   sharedAudio.play().catch(() => {});
-  
+
   // Stop current playback if interrupting
   ttsQueue.stop();
-  
-  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast("Microphone requires a secure HTTPS connection. Please access Mini AI via the HTTPS URL.", true);
-    return;
-  }
+  miniVoiceStatus.textContent = "Connecting microphone...";
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
+    const stream = await requestAudioStream();
+    mediaRecorder = newRecorder(stream);
     audioChunks = [];
 
     mediaRecorder.ondataavailable = (event) => {
@@ -1043,37 +1413,114 @@ async function startRecording() {
 
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(track => track.stop());
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' }); // Chrome often uses webm for audio
+      if (discardNextRecording) {
+        miniVoiceStatus.textContent = IDLE_STATUS;
+        if (typeof miniFace !== 'undefined' && miniFace) miniFace.setEmotion('idle');
+        return;
+      }
+      // Type the blob with what was ACTUALLY recorded (webm on Chrome, mp4 on iOS).
+      const audioBlob = recordingBlob(audioChunks, mediaRecorder);
       await handleAudioSubmission(audioBlob);
     };
 
+    recordStartTime = Date.now();
     mediaRecorder.start();
     isRecording = true;
+    isStartingRecording = false;
     miniPttBtn.classList.add("active");
-    miniVoiceStatus.textContent = "Listening...";
+    miniVoiceStatus.textContent = "Listening... (tap or release to send)";
     miniVoiceSubtitle.hidden = true;
+    if (typeof miniFace !== 'undefined' && miniFace) miniFace.setEmotion('listening');
   } catch (e) {
+    isStartingRecording = false;
+    isRecording = false;
+    miniPttBtn.classList.remove("active");
     console.error("Microphone access denied or error:", e);
-    toast("Microphone access denied. Please click the camera/lock icon in your browser address bar and allow Microphone.", true);
+    if (e.message === "INSECURE_CONTEXT") {
+      toast("⚠️ Microphone requires HTTPS. Please access via the secure HTTPS link.", true);
+    } else if (e.message === "UNSUPPORTED_MEDIA_DEVICES") {
+      toast("⚠️ Microphone is not supported by your browser.", true);
+    } else if (e.name === "NotAllowedError" || e.name === "PermissionDeniedError") {
+      toast("🎤 Microphone permission was denied. Please allow microphone in your browser settings (lock icon in address bar).", true);
+    } else if (e.name === "NotFoundError" || e.name === "DevicesNotFoundError") {
+      toast("🎤 No microphone found on your device.", true);
+    } else {
+      toast("Microphone error: " + (e.message || e.name), true);
+    }
+    miniVoiceStatus.textContent = IDLE_STATUS;
   }
 }
 
-
-function stopRecording() {
-  if (!isRecording || !mediaRecorder) return;
+function stopRecording(force = false) {
+  if (!isRecording || !mediaRecorder) {
+    if (isStartingRecording) {
+      discardNextRecording = true;
+    }
+    return;
+  }
   isRecording = false;
   miniPttBtn.classList.remove("active");
+
+  const duration = Date.now() - recordStartTime;
+  if (!force && duration < 350) {
+    // Less than 350ms is too short to be speech
+    discardNextRecording = true;
+  }
+
   mediaRecorder.stop();
-  miniVoiceStatus.textContent = "Processing...";
+  if (!discardNextRecording) {
+    miniVoiceStatus.textContent = "Processing...";
+    if (typeof miniFace !== 'undefined' && miniFace) miniFace.setEmotion('thinking');
+  } else {
+    miniVoiceStatus.textContent = IDLE_STATUS;
+  }
 }
 
-// Push to talk event listeners
-miniPttBtn.addEventListener("mousedown", startRecording);
-miniPttBtn.addEventListener("mouseup", stopRecording);
-miniPttBtn.addEventListener("mouseleave", stopRecording);
-miniPttBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startRecording(); });
-miniPttBtn.addEventListener("touchend", (e) => { e.preventDefault(); stopRecording(); });
-miniPttBtn.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRecording(); });
+// Push-to-talk + Tap-to-talk event listeners
+let pttPressStart = 0;
+let pttHoldTimer = null;
+let isHoldMode = false;
+
+function handlePttDown(e) {
+  if (e) e.preventDefault();
+  pttPressStart = Date.now();
+  isHoldMode = false;
+
+  if (isRecording) {
+    stopRecording(true);
+    return;
+  }
+
+  startRecording();
+
+  pttHoldTimer = setTimeout(() => {
+    isHoldMode = true;
+  }, 350);
+}
+
+function handlePttUp(e) {
+  if (e) e.preventDefault();
+  if (pttHoldTimer) {
+    clearTimeout(pttHoldTimer);
+    pttHoldTimer = null;
+  }
+
+  const pressDuration = Date.now() - pttPressStart;
+  if (isHoldMode || pressDuration > 400) {
+    stopRecording(false);
+  }
+}
+
+miniPttBtn.addEventListener("mousedown", handlePttDown);
+miniPttBtn.addEventListener("mouseup", handlePttUp);
+miniPttBtn.addEventListener("mouseleave", () => {
+  if (isHoldMode && isRecording) stopRecording(false);
+});
+miniPttBtn.addEventListener("touchstart", handlePttDown, { passive: false });
+miniPttBtn.addEventListener("touchend", handlePttUp, { passive: false });
+miniPttBtn.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRecording(true); });
+// iOS: a long press must hold-to-talk, never pop the callout / context menu.
+miniPttBtn.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // Also allow spacebar when Mini panel is active
 document.addEventListener("keydown", (e) => {
@@ -1094,107 +1541,154 @@ async function handleAudioSubmission(blob) {
   miniVoiceStatus.textContent = "Thinking...";
   
   try {
-    // 1. Transcribe
+    // 1. Transcribe + identify the speaker, concurrently, from the same clip.
     const formData = new FormData();
-    // Use .webm or .wav depending on what the browser generated. Whisper handles both.
-    formData.append("audio", blob, "voice.webm");
-    
+    // Filename extension must match the real container (mp4 on iOS, webm on Chrome).
+    formData.append("audio", blob, uploadNameFor(blob));
+
     const token = getKey();
-    const sttRes = await fetch("/v1/voice/transcribe", {
+    const sttPromise = fetch("/v1/voice/transcribe", {
       method: "POST",
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: formData
     });
-    
+    const idPromise = identifySpeaker(blob);  // best-effort, never throws
+
+    const sttRes = await sttPromise;
     if (!sttRes.ok) {
       const errText = await sttRes.text().catch(() => "");
       throw new Error(`STT failed (${sttRes.status}): ${errText}`);
     }
     const sttData = await sttRes.json();
     const transcript = sttData.text.trim();
-    
+
     if (!transcript) {
-      miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+      miniVoiceStatus.textContent = IDLE_STATUS;
       return;
     }
 
+    await idPromise;  // ensure currentMiniProfileId is resolved before we chat
     await sendToMiniAI(transcript);
   } catch (e) {
     console.error("Voice loop error:", e);
     toast("Voice error: " + e.message, true);
-    miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+    miniVoiceStatus.textContent = IDLE_STATUS;
   }
 }
 
-async function sendToMiniAI(transcript) {
+async function sendToMiniAI(transcript, attempt = 0) {
   miniVoiceSubtitle.textContent = `You: "${transcript}"`;
   miniVoiceSubtitle.hidden = false;
   miniVoiceStatus.textContent = "Thinking...";
-  
+  if (typeof miniFace !== 'undefined' && miniFace) miniFace.setEmotion('thinking');
+
   try {
-    // Stop any ongoing audio before starting new conversation
+    initAudioContext();
     ttsQueue.stop();
-    
-    // 2. Send to Mini Chat LLM via SSE
-    const chatRes = await api("/v1/mini/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: transcript, persona: currentPersona }),
-    });
+    if (window.currentAudioSource) {
+      window.currentAudioSource.stop();
+      window.currentAudioSource = null;
+    }
 
-    const reader = chatRes.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    let sentenceBuffer = "";
+    const wsUrl = new URL(miniPath("/ws/chat"), window.location.href);
+    wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+    const token = getKey();
+    if (token) wsUrl.searchParams.set("_token", token);
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
+    const ws = new WebSocket(wsUrl.href);
 
-      while (true) {
-        let lfIdx = buf.indexOf("\n\n");
-        let crlfIdx = buf.indexOf("\r\n\r\n");
-        let idx = -1;
-        let sepLen = 2;
+    let fullResponseText = "";
+    let nextAudioTime = 0;
+    let gotEmotion = false;
+    let gotAnything = false;  // any server event arrived on this socket
 
-        if (crlfIdx >= 0 && (lfIdx < 0 || crlfIdx < lfIdx)) {
-          idx = crlfIdx;
-          sepLen = 4;
-        } else {
-          idx = lfIdx;
-          sepLen = 2;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        message: transcript,
+        persona: currentPersona,
+        profile_id: currentMiniProfileId,  // recognized speaker, or null (anonymous)
+        announce_voice_ready: pendingVoiceAnnounce,
+      }));
+      pendingVoiceAnnounce = false;  // announce only once
+    };
+
+    ws.onmessage = async (event) => {
+      gotAnything = true;
+      const msg = JSON.parse(event.data);
+      if (msg.event === "token") {
+        fullResponseText += msg.data;
+      } else if (msg.event === "emotion") {
+        // Structured emotion arrives before the audio — flip the face now.
+        try {
+          gotEmotion = true;
+          applyEmotion(JSON.parse(msg.data).emotion);
+        } catch (e) { /* ignore malformed */ }
+      } else if (msg.event === "audio") {
+        const b64 = msg.data;
+        const binaryStr = atob(b64);
+        const len = binaryStr.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        
+        const int16 = new Int16Array(bytes.buffer);
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+          float32[i] = int16[i] / 32768.0;
         }
 
-        if (idx < 0) break;
+        const buffer = audioCtx.createBuffer(1, float32.length, 24000);
+        buffer.getChannelData(0).set(float32);
 
-        const block = buf.slice(0, idx);
-        buf = buf.slice(idx + sepLen);
-        const { event, data } = parseSSE(block);
-
-        if (event === "token") {
-          sentenceBuffer += data;
-          // Simple sentence boundary detection
-          if (/[.!?]\s/.test(sentenceBuffer) || /[.!?]$/.test(data)) {
-             const sentence = sentenceBuffer.trim();
-             if (sentence) {
-               ttsQueue.push(sentence);
-             }
-             sentenceBuffer = "";
-          }
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioCtx.destination);
+        
+        const currentTime = audioCtx.currentTime;
+        if (nextAudioTime < currentTime) {
+          nextAudioTime = currentTime + 0.05;
         }
+        source.start(nextAudioTime);
+        nextAudioTime += buffer.duration;
+        window.currentAudioSource = source;
+      } else if (msg.event === "done") {
+        ws.close();
+        miniVoiceStatus.textContent = IDLE_STATUS;
+        // Fallback if the model never emitted a structured emotion.
+        if (!gotEmotion) applyEmotion("happy");
+        // A name captured mid-conversation → update the identity chip.
+        try {
+          const d = JSON.parse(msg.data);
+          if (d.person_name) updateIdentityChip({ person_name: d.person_name });
+        } catch (e) { /* ignore */ }
+      } else if (msg.event === "error") {
+        console.error("WS Error:", msg.data);
+        const errorMsg = JSON.parse(msg.data).error;
+        toast("Mini AI error: " + errorMsg, true);
+        miniVoiceStatus.textContent = IDLE_STATUS;
+        ws.close();
       }
-    }
-    
-    // Push any remaining text
-    if (sentenceBuffer.trim()) {
-      ttsQueue.push(sentenceBuffer.trim());
-    }
-    
+    };
+
+    ws.onerror = (e) => {
+      console.error("WS error:", e);
+      // Transient drops happen (proxy idle timeouts, network blips on the
+      // phone). If the reply never started, silently retry once before
+      // bothering the user with an error.
+      if (!gotAnything && attempt < 1) {
+        try { ws.close(); } catch (err) { /* already closed */ }
+        setTimeout(() => sendToMiniAI(transcript, attempt + 1), 600);
+        return;
+      }
+      toast("Connection hiccup — try that again?", true);
+      miniVoiceStatus.textContent = IDLE_STATUS;
+    };
+
   } catch (e) {
     console.error("Mini Chat error:", e);
     toast("Mini AI error: " + e.message, true);
-    miniVoiceStatus.textContent = "Hold spacebar or button to talk";
+    miniVoiceStatus.textContent = IDLE_STATUS;
   }
 }
 
@@ -1206,10 +1700,11 @@ $("#mini-text-form").addEventListener("submit", async (e) => {
   if (!text) return;
   
   input.value = "";
-  
-  // Unlock audio context on form submit
+
+  // Unlock audio (Web Audio + legacy element) inside the submit gesture.
+  initAudioContext();
   sharedAudio.play().catch(() => {});
-  
+
   await sendToMiniAI(text);
 });
 
@@ -1220,6 +1715,16 @@ $("#mini-text-input").addEventListener("keydown", (e) => {
     $("#mini-text-form").dispatchEvent(new Event("submit"));
   }
 });
+
+// iOS: when the software keyboard opens it can hide the composer — nudge the
+// focused field back into view once the viewport has settled.
+["#mini-text-input", "#chat-input"].forEach((sel) => {
+  const inp = $(sel);
+  if (!inp) return;
+  inp.addEventListener("focus", () => {
+    setTimeout(() => inp.scrollIntoView({ block: "center" }), 300);
+  });
+});
 // Memories panel (keep as before)
 $("#mini-memories-btn").addEventListener("click", async () => {
   const panel = $("#mini-memories-panel");
@@ -1228,7 +1733,8 @@ $("#mini-memories-btn").addEventListener("click", async () => {
   list.innerHTML = `<div class="mini-memories-empty">Loading memories…</div>`;
   
   try {
-    const data = await apiJson("/v1/mini/memories");
+    const q = currentMiniProfileId ? `?profile_id=${encodeURIComponent(currentMiniProfileId)}` : "";
+    const data = await apiJson(`${miniPath("/memories")}${q}`);
     list.innerHTML = "";
     if (data.memories && data.memories.length > 0) {
       data.memories.forEach((m) => {
@@ -1246,6 +1752,125 @@ $("#mini-memories-btn").addEventListener("click", async () => {
 
 $("#mini-memories-close").addEventListener("click", () => {
   $("#mini-memories-panel").hidden = true;
+  $("#mini-memories-confirm").hidden = true;
+});
+
+// ── Voice ID enrollment ──────────────────────────────────────────────
+const enrollConsent = $("#enroll-consent");
+const enrollRecordBtn = $("#enroll-record-btn");
+const enrollStatus = $("#enroll-status");
+
+$("#mini-voiceid-btn").addEventListener("click", () => {
+  $("#mini-enroll-panel").hidden = false;
+});
+$("#mini-enroll-close").addEventListener("click", () => {
+  $("#mini-enroll-panel").hidden = true;
+});
+enrollConsent.addEventListener("change", () => {
+  enrollRecordBtn.disabled = !enrollConsent.checked;
+});
+
+function setEnrollStatus(msg, bad = false) {
+  enrollStatus.hidden = false;
+  enrollStatus.textContent = msg;
+  enrollStatus.classList.toggle("bad", bad);
+}
+
+// Record `ms` of mic audio, ticking a countdown, and return the audio blob
+// (container chosen by the browser — webm on Chrome, mp4 on iOS).
+async function recordSeconds(ms, onTick) {
+  const stream = await requestAudioStream();
+  const rec = newRecorder(stream);
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const stopped = new Promise((res) => { rec.onstop = res; });
+  rec.start();
+  const started = Date.now();
+  let iv = null;
+  if (onTick) {
+    onTick(Math.ceil(ms / 1000));
+    iv = setInterval(() => {
+      const left = Math.ceil((ms - (Date.now() - started)) / 1000);
+      if (left > 0) onTick(left);
+    }, 250);
+  }
+  await new Promise((r) => setTimeout(r, ms));
+  rec.stop();
+  await stopped;
+  if (iv) clearInterval(iv);
+  stream.getTracks().forEach((t) => t.stop());
+  return recordingBlob(chunks, rec);
+}
+
+enrollRecordBtn.addEventListener("click", async () => {
+  if (!enrollConsent.checked) return;
+  const name = $("#enroll-name").value.trim();
+  const nick = $("#enroll-nick").value.trim() || "Mini";
+  enrollRecordBtn.disabled = true;
+  try {
+    const blob = await recordSeconds(4000, (s) => setEnrollStatus(`Recording… keep talking (${s})`));
+    setEnrollStatus("Processing your voice…");
+    const { pcm_base64, sample_rate } = await blobToPcm16Base64(blob);
+    const info = await apiJson(miniPath("/enroll"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        person_name: name || null,
+        bot_nickname: nick,
+        persona: currentPersona,
+        consent: true,
+        pcm_base64,
+        sample_rate,
+      }),
+    });
+    setMiniProfile(info.profile_id);
+    updateIdentityChip(info);
+    setEnrollStatus(`Enrolled${info.person_name ? ` as ${info.person_name}` : ""}! Mini will recognize you now.`);
+    toast("Voice enrolled ✓");
+    setTimeout(() => { $("#mini-enroll-panel").hidden = true; }, 1600);
+  } catch (e) {
+    console.error("enroll failed", e);
+    setEnrollStatus("Enrollment failed: " + e.message, true);
+  } finally {
+    enrollRecordBtn.disabled = !enrollConsent.checked;
+  }
+});
+
+// Show inline confirm bar — no browser popup
+$("#mini-memories-clear").addEventListener("click", () => {
+  $("#mini-memories-confirm").hidden = false;
+});
+
+// Cancel hides the confirm bar
+$("#mini-memories-confirm-no").addEventListener("click", () => {
+  $("#mini-memories-confirm").hidden = true;
+});
+
+// Yes — perform the delete
+$("#mini-memories-confirm-yes").addEventListener("click", async () => {
+  const confirmBar = $("#mini-memories-confirm");
+  const yesBtn = $("#mini-memories-confirm-yes");
+  yesBtn.disabled = true;
+  yesBtn.textContent = "Deleting…";
+
+  try {
+    const data = await apiJson(miniPath("/memories"), { method: "DELETE" });
+    // Factory reset: the server also wiped voice profiles — clear the local
+    // voice identity so Mini re-introduces itself and re-learns the voice.
+    setMiniProfile(null);
+    setVoiceConsent(false);
+    voiceReadyAnnounced = false;
+    pendingVoiceAnnounce = false;
+    updateIdentityChip(null);
+    toast(`Fresh start — ${data.deleted} memor${data.deleted === 1 ? "y" : "ies"} and the Voice ID cleared.`);
+    $("#mini-memories-list").innerHTML = `<div class="mini-memories-empty">No memories yet — start chatting and I'll remember the important stuff.</div>`;
+  } catch (e) {
+    toast("Failed to clear memories: " + e.message, true);
+  } finally {
+    confirmBar.hidden = true;
+    yesBtn.disabled = false;
+    yesBtn.textContent = "Yes, delete";
+  }
 });
 
 

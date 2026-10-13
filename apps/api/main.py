@@ -7,7 +7,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 
 from apps.api.middleware.auth import BearerAuthMiddleware
@@ -160,7 +166,14 @@ def _inject_site_verification(html: str, token: str) -> str:
     return tag + html
 
 
-def _render_index(html: str, *, base_url: str, gsc_token: str = "") -> str:
+def _render_index(
+    html: str,
+    *,
+    base_url: str,
+    gsc_token: str = "",
+    mini_only: bool = False,
+    owner_name: str = "",
+) -> str:
     """Weave host-specific tags into the console shell: the Google verification
     meta (when configured) and absolute social-preview URLs — some crawlers reject
     a relative og:image and expect an og:url."""
@@ -170,6 +183,12 @@ def _render_index(html: str, *, base_url: str, gsc_token: str = "") -> str:
     if "</head>" in html:
         html = html.replace(
             "</head>", f'  <meta property="og:url" content="{base}/" />\n</head>', 1
+        )
+    if mini_only:
+        name_str = f" for {owner_name}" if owner_name else ""
+        html = html.replace(
+            "<title>Scrappy · Vault Zeta</title>",
+            f"<title>Mini · Tiny AI Best Friend{name_str} 💛</title>",
         )
     return html
 
@@ -192,9 +211,9 @@ def create_app() -> FastAPI:
         token=settings.vault_api_key,
         allow_paths=(
             "/", "/status", "/v1/live", "/v1/health", "/favicon.ico",
-            "/robots.txt", "/sitemap.xml",
+            "/robots.txt", "/sitemap.xml", "/miniai", "/sw.js",
         ),
-        allow_prefixes=("/static/",),
+        allow_prefixes=("/static/", "/v1/mini/t/", "/u/"),
     )
 
     app.include_router(chat_router.router)
@@ -248,12 +267,30 @@ def create_app() -> FastAPI:
     async def console(request: Request) -> HTMLResponse:
         # Serve the console shell with host-specific tags (Search Console
         # verification + absolute social-preview URLs) woven into <head>.
+        is_mini = settings.mini_only or request.query_params.get("app") == "mini"
         html = _render_index(
             index_html.read_text(encoding="utf-8"),
             base_url=str(request.base_url),
             gsc_token=settings.google_site_verification,
+            mini_only=is_mini,
+            owner_name=settings.mini_owner_name,
         )
         return HTMLResponse(html)
+
+    # Service worker must be served from the root so its scope covers "/"
+    @app.get("/sw.js", include_in_schema=False)
+    async def service_worker() -> FileResponse:
+        return FileResponse(static_dir / "sw.js", media_type="application/javascript")
+
+    # Friendly entry path for gift deployment: lands straight on Mini face
+    @app.get("/miniai", include_in_schema=False)
+    async def miniai_entry() -> RedirectResponse:
+        return RedirectResponse("/?app=mini", status_code=307)
+
+    # Tenant personal link: loads SPA shell with tenant slug
+    @app.get("/u/{slug}", include_in_schema=False)
+    async def tenant_entry(slug: str) -> FileResponse:
+        return FileResponse(static_dir / "index.html")
 
     @app.get("/robots.txt", include_in_schema=False)
     async def robots(request: Request) -> PlainTextResponse:
@@ -280,17 +317,12 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/live", tags=["meta"])
     async def live() -> dict:
-        # Liveness only: the process is up and the event loop is serving. Makes NO
-        # upstream calls (no LLM / embedder / DB), so a rate-limited or cooling-down
-        # key can't fail the platform healthcheck and trigger a restart loop (#19).
-        # /v1/health stays the DEEP readiness check for humans + monitoring.
+        # Liveness only: the process is up and the event loop is serving.
         return {"status": "ok"}
 
     @app.get("/status", tags=["meta"])
     async def status() -> dict:
-        # Which experts are actually online. An expert is withheld when a connector
-        # it needs is missing (e.g. ask_email without the `gmail` extra), so surface
-        # that instead of leaving it a silent absence.
+        # Which experts are actually online.
         from core.agents.experts import ALL_EXPERTS
         from core.agents.registry import get_agent_registry
         from core.connectors.registry import get_registry as _connectors
@@ -306,6 +338,8 @@ def create_app() -> FastAPI:
             "llm_model": settings.llm_model,
             "stt_provider": settings.stt_provider,
             "auth_enabled": bool(settings.vault_api_key),
+            "mini_only": settings.mini_only,
+            "mini_owner_name": settings.mini_owner_name,
             "mcp": {
                 "enabled": True,
                 "transport": "streamable-http",

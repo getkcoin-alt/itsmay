@@ -38,6 +38,8 @@ body {
   font-size: 14px;
   line-height: 1.5;
   overflow: hidden;
+  overscroll-behavior: none; /* standalone PWA: no rubber-band on the app shell */
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ── Sidebar ────────────────────────────────────────────────────── */
@@ -49,6 +51,7 @@ body {
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   height: 100vh;
+  height: 100dvh; /* iOS: 100vh includes the collapsed URL bar */
   overflow: hidden;
 }
 
@@ -129,21 +132,6 @@ body {
 }
 .conn-label { font-size: 0.75rem; color: var(--text-muted); }
 .settings-nav-item { margin-top: 2px; }
-.sidebar-credit {
-  display: block;
-  margin-top: 0.5rem;
-  padding: 0.5rem 0.625rem 0.15rem;
-  border-top: 1px solid var(--border);
-  font-size: 0.62rem;
-  line-height: 1.5;
-  color: var(--text-muted);
-  text-decoration: none;
-  letter-spacing: 0.01em;
-  transition: color 0.15s ease;
-}
-.sidebar-credit:hover { color: var(--text-dim); }
-.sidebar-credit strong { color: var(--text-dim); font-weight: 600; }
-.sidebar-credit .credit-site { font-family: var(--mono); }
 
 /* ── Mobile bar & nav ────────────────────────────────────────────── */
 .mobile-bar {
@@ -180,6 +168,7 @@ body {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* iOS: 100vh includes the collapsed URL bar */
   position: relative;
 }
 
@@ -218,6 +207,8 @@ button {
   cursor: pointer; font-weight: 600; font-size: 0.8rem;
   font-family: var(--sans);
   transition: filter 0.12s, background 0.12s;
+  touch-action: manipulation; /* kill iOS double-tap-zoom delay */
+  -webkit-tap-highlight-color: transparent;
 }
 button:hover { filter: brightness(1.1); }
 button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
@@ -740,11 +731,29 @@ input[type=range] { accent-color: var(--accent); }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
 @media (max-width: 768px) {
+  body { flex-direction: column; height: 100vh; height: 100dvh; }
   .sidebar { display: none; }
-  .mobile-bar { display: flex; }
-  .mobile-nav { display: flex; }
-  .main-content { height: calc(100vh - 52px - 60px); margin-top: 52px; }
-  body { flex-direction: column; }
+  .mobile-bar {
+    display: flex;
+    /* notch / dynamic island, rounded corners in landscape */
+    padding-top: calc(0.6rem + env(safe-area-inset-top, 0px));
+    padding-left: calc(1rem + env(safe-area-inset-left, 0px));
+    padding-right: calc(1rem + env(safe-area-inset-right, 0px));
+  }
+  .mobile-nav {
+    display: flex;
+    /* in-flow flex child (not fixed) so heights never double-count */
+    position: static;
+    flex-shrink: 0;
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.25rem); /* home indicator */
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .main-content {
+    height: auto; flex: 1; min-height: 0; margin-top: 0;
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
   .sys-grid { grid-template-columns: 1fr; }
   .sys-card.span2 { grid-column: 1; }
   .panel-header { padding: 0.6rem 1rem; }
@@ -753,6 +762,13 @@ input[type=range] { accent-color: var(--accent); }
   .chat-composer { padding: 0.6rem 1rem; }
   .watch-input-row { flex-direction: column; }
   .guide-body { padding: 1rem 1rem 5rem; }
+
+  /* iOS zooms the page when a focused field is under 16px */
+  textarea, select, input[type="text"], input[type="password"],
+  .chat-form textarea, .search-input, .watch-input-row input, .text-field,
+  .text-field.sm, .add-card textarea, .mini-enroll-field input {
+    font-size: 16px;
+  }
 }
 
 /* ── Mini AI Tab & Chat UI ──────────────────────────────────────── */
@@ -937,6 +953,41 @@ input[type=range] { accent-color: var(--accent); }
 .mini-memories-title {
   font-weight: 600;
   font-size: 0.92rem;
+}
+.mini-memories-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-ghost.danger {
+  color: #ff6b6b;
+  border-color: transparent;
+}
+.btn-ghost.danger:hover {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ff4444;
+}
+.btn-ghost.danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.mini-memories-confirm {
+  padding: 1rem;
+  background: rgba(255, 107, 107, 0.08);
+  border-bottom: 1px solid rgba(255, 107, 107, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.mini-memories-confirm[hidden] {
+  display: none !important;
+}
+.mini-memories-confirm-btns {
+  display: flex;
+  gap: 0.5rem;
 }
 .mini-memories-list {
   flex: 1;
@@ -1163,15 +1214,81 @@ input[type=range] { accent-color: var(--accent); }
   animation: pulse-avatar 1.5s infinite alternate;
 }
 
-.mini-voice-avatar {
-  font-size: 3.5rem;
+/* ── Mini AI Face SVG ───────────────────────────────────────────────── */
+.mini-avatar-container {
+  width: 220px;
+  height: 180px;
+  margin: 0 auto;
+  overflow: visible;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.mini-avatar-container.speaking {
+  filter: drop-shadow(0 0 18px var(--mini-accent));
+}
+
+.mini-face-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  cursor: pointer;
+  /* long-press near the hold-to-talk area must not select or pop a callout */
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Robot Helmet (Light grey/blue shell) */
+.robot-helmet {
+  fill: #e8eef5;
+  stroke: #c2d2e3;
+  stroke-width: 3;
+}
+
+/* Robot Ears (Side pieces) */
+.robot-ear {
+  fill: #c2d2e3;
+  stroke: #a1b8d0;
+  stroke-width: 2;
+}
+
+/* Robot Screen Border (Glowing Cyan Ring) */
+.robot-screen-border {
+  fill: #1c5299;
+  stroke: #4db8ff;
+  stroke-width: 4;
+  filter: drop-shadow(0 0 8px rgba(77, 184, 255, 0.4));
+}
+
+/* Robot Inner Screen (Dark screen) */
+.robot-screen {
+  fill: #061122;
+}
+
+/* Face Features (White/Cyan Glowing paths) */
+.robot-eye, .robot-mouth, .robot-extra {
+  fill: none;
+  stroke: #e6f7ff;
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 4px rgba(230, 247, 255, 0.6));
+  transition: d 0.2s ease, transform 0.2s ease;
+  transform-origin: center;
+}
+
+/* When a path defines a filled shape (like the heart or open mouth), we color it */
+path[d$="Z"].robot-eye, path[d$="Z"].robot-mouth, path[d$="Z"].robot-extra {
+  fill: #e6f7ff;
 }
 
 @keyframes pulse-avatar {
-  0% { transform: scale(1); box-shadow: 0 0 20px var(--mini-accent-dim); }
-  100% { transform: scale(1.08); box-shadow: 0 0 40px rgba(255, 183, 77, 0.3); }
+  0%   { transform: scale(1) translateY(0);    filter: drop-shadow(0 4px 12px rgba(77,184,255,0.2)); }
+  100% { transform: scale(1.02) translateY(-4px); filter: drop-shadow(0 8px 24px rgba(77,184,255,0.5)); }
 }
+
 
 .mini-voice-status {
   font-size: 1.1rem;
@@ -1206,7 +1323,10 @@ input[type=range] { accent-color: var(--accent); }
   cursor: pointer;
   transition: all 0.2s ease;
   user-select: none;
+  -webkit-user-select: none;
   -webkit-touch-callout: none;
+  touch-action: none; /* holding to talk must never start a scroll or zoom */
+  -webkit-tap-highlight-color: transparent;
 }
 
 .mini-ptt-btn svg {
@@ -1226,4 +1346,196 @@ input[type=range] { accent-color: var(--accent); }
 
 .mini-ptt-btn.active svg {
   stroke: var(--danger);
+}
+
+/* ── Voice ID: identity chip + enrollment form ─────────────────────── */
+.mini-identity {
+  align-self: center;
+  margin: 0.35rem auto 0;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+}
+.mini-identity[hidden] { display: none !important; }
+
+.mini-enroll-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1rem;
+  overflow-y: auto;
+}
+.mini-enroll-intro {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.mini-enroll-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.mini-enroll-field input {
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.mini-enroll-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.mini-consent {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+  cursor: pointer;
+}
+.mini-consent input { margin-top: 0.15rem; flex-shrink: 0; }
+.mini-enroll-status {
+  font-size: 0.8rem;
+  color: var(--accent);
+  min-height: 1.1em;
+}
+.mini-enroll-status.bad { color: var(--danger); }
+.mini-enroll-status[hidden] { display: none !important; }
+
+/* ── Voice-learning consent bar ────────────────────────────────────── */
+.mini-consent-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: center;
+  text-align: center;
+  max-width: 320px;
+  margin: 0.5rem auto 0;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.mini-consent-bar[hidden] { display: none !important; }
+.mini-consent-bar-btns { display: flex; gap: 0.5rem; }
+
+/* ── Gift note ─────────────────────────────────────────────────────── */
+.mini-made-for {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  opacity: 0.7;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── iOS / touch polish (additive; no desktop impact) ──────────────── */
+/* Momentum scrolling on every inner scroll area */
+.chat-log, .panel-body, .guide-body, .models-body,
+.mini-memories-list, .mini-enroll-body, .agent-log {
+  -webkit-overflow-scrolling: touch;
+}
+/* Keep composers visible when scrolled to after keyboard opens */
+.chat-form textarea { scroll-margin: 90px; }
+
+/* ── Mobile: Mini panel + phone-height fixes ─────────────────────────
+   (Separate block so it lands AFTER the Mini base rules above.) */
+@media (max-width: 768px) {
+  /* Header: brand row + actions row wrap instead of overflowing at 375px */
+  .mini-header { flex-wrap: wrap; row-gap: 0.4rem; }
+  .mini-header-actions {
+    margin-left: auto;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  /* Face nicely sized and centered on a phone */
+  .mini-voice-container { gap: 1.4rem; padding: 1.25rem 1rem; }
+  .mini-avatar-container {
+    width: min(64vw, 240px);
+    height: auto;
+    aspect-ratio: 220 / 180;
+  }
+  .mini-voice-status { font-size: 1rem; }
+  .mini-voice-subtitle { max-width: 92%; }
+  .mini-consent-bar { max-width: 100%; }
+
+  /* PTT: big, thumb-reachable hit target */
+  .mini-ptt-btn { width: 80px; height: 80px; }
+  .mini-ptt-btn svg { width: 28px; height: 28px; }
+
+  /* Slide-out panels take the full phone width */
+  .mini-memories-panel { width: 100%; border-left: none; }
+
+  /* Toast above the bottom nav, not under the home indicator */
+  .toast { bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ── Mini-only ("gift") mode: cute pink dress ──────────────────────── */
+body.mini-only {
+  --bg:          #140e13;
+  --bg-sidebar:  #0d080c;
+  --bg-card:     #1d1420;
+  --bg-input:    #150f16;
+  --bg-hover:    #251826;
+  --border:      #322334;
+  --border-sub:  #1d1420;
+  --accent:      #f472b6;             /* pink */
+  --accent-dim:  #58223f;
+  --accent-glow: rgba(244, 114, 182, .18);
+  --mini-accent: #f9a8d4;
+  --mini-accent-dim: rgba(249, 168, 212, .16);
+  --mini-bubble-bg: rgba(249, 168, 212, .08);
+}
+
+/* The face blushes too: pink ring + soft pink features */
+body.mini-only .robot-screen-border {
+  fill: #8c2f63;
+  stroke: #ff8fc7;
+  filter: drop-shadow(0 0 8px rgba(255, 143, 199, 0.45));
+}
+body.mini-only .robot-screen { fill: #1b0a15; }
+body.mini-only .robot-eye,
+body.mini-only .robot-mouth,
+body.mini-only .robot-extra {
+  stroke: #ffe6f2;
+  filter: drop-shadow(0 0 4px rgba(255, 190, 225, 0.65));
+}
+body.mini-only path[d$="Z"].robot-eye,
+body.mini-only path[d$="Z"].robot-mouth,
+body.mini-only path[d$="Z"].robot-extra { fill: #ffe6f2; }
+body.mini-only .robot-helmet { fill: #f7ecf3; stroke: #e3c4d6; }
+body.mini-only .robot-ear   { fill: #e3c4d6; stroke: #cfa5bf; }
+
+/* PTT button glows pink while held */
+body.mini-only .mini-ptt-btn.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 6px var(--accent-glow);
+}
+
+/* Hide every surface that isn't Mini — the whole app IS the Mini panel.
+   Column layout at all widths so plain Safari (mac or phone) looks right. */
+body.mini-only { flex-direction: column; height: 100vh; height: 100dvh; }
+body.mini-only .sidebar { display: none !important; }
+body.mini-only .mobile-nav { display: none !important; }
+body.mini-only .mobile-bar {
+  display: flex;
+  padding-top: calc(0.6rem + env(safe-area-inset-top, 0px));
+}
+body.mini-only .main-content {
+  margin: 0; height: auto; flex: 1; min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px); /* no bottom nav — pad the composer */
 }
