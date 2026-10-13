@@ -23,6 +23,11 @@ Current production architecture keeps these boundaries explicit:
 The recovery target is practical continuity across account, provider and machine changes. It
 does not claim to transfer model weights, hidden reasoning or consciousness.
 
+## Deployment & CI/CD
+
+Mini AI runs live on Linux host with an automated CI/CD pipeline. Every update pushed to `main` is automatically pulled, verified, and reloaded in production.
+
+
 ---
 
 ## Topology
