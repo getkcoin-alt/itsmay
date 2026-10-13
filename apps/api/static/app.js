@@ -1027,6 +1027,11 @@ async function startRecording() {
   // Stop current playback if interrupting
   ttsQueue.stop();
   
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast("Microphone requires a secure HTTPS connection. Please access Mini AI via the HTTPS URL.", true);
+    return;
+  }
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     mediaRecorder = new MediaRecorder(stream);
@@ -1049,9 +1054,10 @@ async function startRecording() {
     miniVoiceSubtitle.hidden = true;
   } catch (e) {
     console.error("Microphone access denied or error:", e);
-    toast("Microphone access denied. Please allow microphone permissions.", true);
+    toast("Microphone access denied. Please click the camera/lock icon in your browser address bar and allow Microphone.", true);
   }
 }
+
 
 function stopRecording() {
   if (!isRecording || !mediaRecorder) return;
