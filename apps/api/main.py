@@ -212,13 +212,16 @@ def create_app() -> FastAPI:
     try:
         from apps.api.routers import mini as mini_router
 
-        app.include_router(mini_router.router)
+        app.include_router(mini_router.router, prefix="/v1/mini")
+        app.include_router(mini_router.router, prefix="/v1/mini/t/{slug}")
+        app.include_router(mini_router.admin_router)
         app.state.mini_router_available = True
         app.state.mini_router_error = None
     except Exception as exc:
         app.state.mini_router_available = False
         app.state.mini_router_error = f"{type(exc).__name__}: {exc}"
         get_logger("api").warning("mini.router_unavailable", error=app.state.mini_router_error)
+
 
     app.include_router(presence_router.router)
     app.include_router(settings_router.router)
