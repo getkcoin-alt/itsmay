@@ -1,0 +1,61 @@
+name: CI
+
+# The repo-wide gate. The other workflows verify one feature each and trigger on
+# their own feature branches — which meant nothing at all ran on a push to
+# `main`, and `main` sat red for five days with a test suite that would not even
+# collect. This runs everything, on every push to main and every PR into it.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to the same ref makes an in-flight run obsolete.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor declared in pyproject; 3.12 is what the MCP service
+        # runs on. Both are supported, so both are proven.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project and test tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,continuity]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        # Not `-q`: on a red build the durable artifact is the failure output.
+        run: pytest --tb=short
+
+      - name: Entity acceptance scorecard
+        # Informational, and deliberately not a gate: ENTITY_STATUS is FALSE by
+        # design until all twenty criteria pass. The pinned verdicts in
+        # tests/test_entity_acceptance.py are what actually fail the build when a
+        # proven capability regresses.
+        run: scrappy entity

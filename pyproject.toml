@@ -20,6 +20,10 @@ dependencies = [
     "pyyaml>=6.0",
     "redis[hiredis]>=5.0",
     "mcp>=2.0,<3",
+    # Imported directly by core/voice/tts_elevenlabs.py for ElevenLabs'
+    # stream-input socket. uvicorn[standard] happens to pull it in too, but a
+    # direct import deserves a direct declaration.
+    "websockets>=13.0",
 ]
 
 [project.scripts]
@@ -54,7 +58,11 @@ gmail = [                                    # Gmail connector (set GOOGLE_CREDE
 continuity = ["cryptography>=43"]
 
 dev = [
-    "ruff>=0.7",
+    # Pinned exactly, on purpose. A floating ruff means a new release can add
+    # rules and turn `main` red without a line of code changing — which is how
+    # the lint baseline silently drifted to 114 findings once already. Bump it
+    # deliberately, with the fixes in the same commit.
+    "ruff==0.17.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
 ]
@@ -73,6 +81,37 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+# The long line is embedded AppleScript inside a Python string; a `# noqa`
+# there would become part of the script, and wrapping it risks the one thing
+# that cannot be tested off a Mac.
+"apps/mac_agent/chrome.py" = ["E501"]
+# A standalone script: it puts the repo root on sys.path and loads .env before
+# importing anything from `core`, which is the whole point of the ordering.
+"scripts/seed_memory.py" = ["E402"]
+# The Mac voice client is a single-user local CLI with no concurrent requests
+# to starve: blocking file reads, `input()` prompts and a sleep-poll loop are
+# deliberate simplicity there, not latency bugs.
+"apps/mac_agent/voice_loop.py" = ["ASYNC110", "ASYNC230", "ASYNC240", "ASYNC250"]
+"apps/cli/__init__.py" = ["ASYNC250"]
+
+# B008 flags function calls in argument defaults — but that IS the FastAPI
+# dependency-injection idiom (`x: T = Depends(...)`), and these factories are
+# evaluated per-request by FastAPI, not once at import. ruff 0.17 dropped them
+# from its built-in allowlist, so name them here.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Security",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

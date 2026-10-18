@@ -12,7 +12,6 @@ import asyncpg
 from core.goals.models import GoalState
 from core.memory.sqlite_util import SqliteConnection, connect, restrict_file_perms
 
-
 _SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS goal_runtime_state (
     id TEXT PRIMARY KEY,

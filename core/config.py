@@ -126,8 +126,10 @@ class Settings(BaseSettings):
     say_rate: int = 0
 
     # ── Mini AI companion (fully local, per-device) ───────────────
-    companion_provider: str = "ollama"            # "ollama" or "openai" (for Groq, OpenRouter, etc.)
-    companion_base_url: str = ""                  # if empty, falls back to ollama_host or llm_base_url
+    # "ollama" or "openai" (for Groq, OpenRouter, etc.)
+    companion_provider: str = "ollama"
+    # if empty, falls back to ollama_host or llm_base_url
+    companion_base_url: str = ""
     companion_api_key: str = ""                   # if empty, falls back to llm_api_key
     companion_model: str = "llama3.2:3b"          # Ollama instruct model for the friend
     companion_persona: str = "friend"             # default personality: "friend" | "mentor"
@@ -141,8 +143,9 @@ class Settings(BaseSettings):
     # Dedicated-device ("gift") mode: this deployment belongs to ONE person.
     mini_owner_name: str = ""                     # e.g. "Khushi" — Mini knows who it's talking to
     mini_only: bool = False                       # frontend shows only the Mini AI tab
-    mini_owner_pin: str = ""                      # the legacy owner's per-tenant PIN (see tenants.py);
-                                                   # kept separate from vault_api_key even if equal today
+    # The legacy owner's per-tenant PIN (see tenants.py); kept separate from
+    # vault_api_key even if equal today.
+    mini_owner_pin: str = ""
 
     # ── Multi-tenant onboarding (unique URL + PIN per person) ──────
     # A tiny registry mapping URL slug -> {pin, owner_name, own sqlite db}, so

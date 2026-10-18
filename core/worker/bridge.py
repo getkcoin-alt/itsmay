@@ -94,7 +94,7 @@ class WorkerBridge:
         agent_id: str,
         kind: str,
         cmd: str,
-        timeout: int,
+        timeout: int,  # noqa: ASYNC109 — sent to the worker, not an asyncio deadline
         task: str = "",
         thought: str = "",
         workdir: str = "",

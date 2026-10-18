@@ -35,13 +35,20 @@ import json
 import os
 import re
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import AsyncIterator
 from zoneinfo import ZoneInfo
 
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import HTTPConnection
@@ -127,7 +134,8 @@ _EMOTION_INSTRUCTION = """
 ## OUTPUT FORMAT (STRICT — the app parses this)
 Reply with a single JSON object and nothing else. The FIRST key must be
 "emotion" and the second "response":
-  {"emotion": "<one of: neutral, happy, excited, laughing, sad, surprised, thinking>", "response": "<what you say out loud>"}
+  {"emotion": "<one of: neutral, happy, excited, laughing, sad, surprised,
+   thinking>", "response": "<what you say out loud>"}
 Rules:
 - "emotion" is how your face should react — pick the single best fit for your reply.
 - "response" is ONLY the spoken words: no JSON, no markdown, no emoji, no stage directions.
@@ -241,7 +249,8 @@ def _situational_context(is_first_conversation: bool, owner: str) -> str:
             f"and Mentor — always here to listen as a friend and guide her as a mentor; she can "
             f"give you any name she wants and you'll save it in your memory; you were created to "
             f"bring her happiness and handle her mood swings, even in the middle of the night. "
-            f"Then ask her to register her voice (the Voice ID) so you always know it's her talking."
+            "Then ask her to register her voice (the Voice ID) so you always know "
+            "it's her talking."
         )
     elif is_first_conversation:
         lines.append(
@@ -406,7 +415,8 @@ def _onboarding_context(profile: Profile, owner: str) -> str:
             'include a "user_name" key with exactly the name they said. If they tell you what '
             'to call you, also include a "bot_name" key. For example, if they say "I\'m Karan, '
             'call you Pixel", reply with: '
-            '{"emotion":"happy","response":"Lovely to meet you, Karan!","user_name":"Karan","bot_name":"Pixel"}. '
+            '{"emotion":"happy","response":"Lovely to meet you, Karan!",'
+            '"user_name":"Karan","bot_name":"Pixel"}. '
             "Only include these keys on the turn they actually say a name; otherwise omit them.",
         ]
     else:
@@ -667,7 +677,9 @@ async def mini_enroll(body: EnrollRequest, ctx: CompanionContext = Depends(get_c
 
 
 @router.post("/identify")
-async def mini_identify(body: IdentifyRequest, ctx: CompanionContext = Depends(get_companion_context)):
+async def mini_identify(
+    body: IdentifyRequest, ctx: CompanionContext = Depends(get_companion_context)
+):
     """Identify who is speaking from a short voice sample — and, when `learn` is
     set, progressively enroll a new voice over a few turns.
 
@@ -841,8 +853,6 @@ async def get_history(limit: int = 30, ctx: CompanionContext = Depends(get_compa
         ],
     }
 
-from fastapi import WebSocket, WebSocketDisconnect
-
 @router.websocket("/ws/chat")
 async def mini_ws_chat(websocket: WebSocket):
     await websocket.accept()
@@ -873,7 +883,9 @@ async def mini_ws_chat(websocket: WebSocket):
 
         text = (body.message or "").strip()
         if not text:
-            await websocket.send_json({"event": "done", "data": json.dumps({"error": "empty message"})})
+            await websocket.send_json(
+                {"event": "done", "data": json.dumps({"error": "empty message"})}
+            )
             return
 
         t0 = time.monotonic()
@@ -923,7 +935,9 @@ async def mini_ws_chat(websocket: WebSocket):
                 emo, spoken = parser.feed(chunk.delta)
                 if emo and not emotion_sent:
                     emotion_sent = True
-                    await websocket.send_json({"event": "emotion", "data": json.dumps({"emotion": emo})})
+                    await websocket.send_json(
+                        {"event": "emotion", "data": json.dumps({"emotion": emo})}
+                    )
                 if spoken:
                     reply_parts.append(spoken)
                     await websocket.send_json({"event": "token", "data": spoken})
@@ -934,12 +948,16 @@ async def mini_ws_chat(websocket: WebSocket):
                 await websocket.send_json({"event": "token", "data": tail})
                 yield tail
             if not emotion_sent and parser.emotion:
-                await websocket.send_json({"event": "emotion", "data": json.dumps({"emotion": parser.emotion})})
+                await websocket.send_json(
+                    {"event": "emotion", "data": json.dumps({"emotion": parser.emotion})}
+                )
 
         async def scripted_stream():
             # First-ever greeting on the owner's device → the exact gift
             # introduction, spoken sentence by sentence (no LLM).
-            await websocket.send_json({"event": "emotion", "data": json.dumps({"emotion": "happy"})})
+            await websocket.send_json(
+                {"event": "emotion", "data": json.dumps({"emotion": "happy"})}
+            )
             for s in _scripted_intro(owner):
                 chunk = s + " "
                 reply_parts.append(chunk)
@@ -989,8 +1007,10 @@ async def mini_ws_chat(websocket: WebSocket):
     except Exception as exc:
         log.error("mini.ws_chat.error", error=str(exc), exc_info=True)
         try:
-            await websocket.send_json({"event": "error", "data": json.dumps({"error": str(exc)})})
-        except:
+            await websocket.send_json(
+                {"event": "error", "data": json.dumps({"error": str(exc)})}
+            )
+        except Exception:
             pass
 
 

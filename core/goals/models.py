@@ -82,7 +82,7 @@ class GoalTask:
         }
 
     @classmethod
-    def from_dict(cls, value: dict) -> "GoalTask":
+    def from_dict(cls, value: dict) -> GoalTask:
         return cls(
             id=str(value["id"]),
             title=str(value["title"]),
@@ -121,7 +121,7 @@ class Goal:
         }
 
     @classmethod
-    def from_dict(cls, value: dict) -> "Goal":
+    def from_dict(cls, value: dict) -> Goal:
         return cls(
             id=str(value["id"]),
             objective=str(value["objective"]),
@@ -146,7 +146,7 @@ class GoalState:
         }
 
     @classmethod
-    def from_dict(cls, value: dict | None) -> "GoalState":
+    def from_dict(cls, value: dict | None) -> GoalState:
         if not value:
             return cls()
         if int(value.get("schema_version", 0)) != 1:

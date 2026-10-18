@@ -226,7 +226,7 @@ class TerminalAgent:
         return False
 
     # ── command execution: Mac worker if connected, else server ──
-    async def _run_command(self, kind: str, cmd: str, timeout: int) -> str:
+    async def _run_command(self, kind: str, cmd: str, timeout: int) -> str:  # noqa: ASYNC109
         """Run a bash/claude command on the connected Mac worker, or locally."""
         bridge = get_worker_bridge()
         if bridge.worker_online():
@@ -347,7 +347,7 @@ class TerminalAgent:
         return d
 
 
-async def _exec(cmd: str, cwd: str, timeout: int) -> str:
+async def _exec(cmd: str, cwd: str, timeout: int) -> str:  # noqa: ASYNC109
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -360,7 +360,7 @@ async def _exec(cmd: str, cwd: str, timeout: int) -> str:
         if len(text) > 4096:
             text = text[:4096] + "\n…[truncated]"
         return text or "(no output)"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()  # type: ignore[union-attr]
         except Exception:

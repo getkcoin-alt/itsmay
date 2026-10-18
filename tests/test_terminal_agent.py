@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from core.terminal_agent.agent import TerminalAgent, LogEntry
+from core.terminal_agent.agent import TerminalAgent
 from core.terminal_agent.registry import AgentStore
-
 
 # ── TerminalAgent unit tests ──────────────────────────────────────
 
@@ -119,9 +116,9 @@ def test_store_get_missing_returns_none():
 def test_store_list_newest_first():
     store = AgentStore()
     with patch.object(TerminalAgent, "launch"):
-        a1 = store.spawn("first", MagicMock())
-        a2 = store.spawn("second", MagicMock())
-        a3 = store.spawn("third", MagicMock())
+        store.spawn("first", MagicMock())
+        store.spawn("second", MagicMock())
+        store.spawn("third", MagicMock())
     agents = store.list_all()
     assert [a.task for a in agents] == ["third", "second", "first"]
 

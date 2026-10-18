@@ -289,7 +289,12 @@ def probe_resume_objectives() -> Finding:
             second_store = SqliteGoalStore(path)
             restored = await GoalManager(second_store).active_goal()
             second_store.close()
-        if restored and restored.id == goal.id and restored.tasks and restored.tasks[0].id == task.id:
+        if (
+            restored
+            and restored.id == goal.id
+            and restored.tasks
+            and restored.tasks[0].id == task.id
+        ):
             return Finding(
                 Verdict.PASS,
                 f"objective {goal.id[:8]} and unresolved task {task.id[:8]} survived "

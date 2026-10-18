@@ -17,14 +17,12 @@ from core.goals.models import (
     TERMINAL_TASK_STATES,
     Goal,
     GoalProvenance,
-    GoalState,
     GoalStatus,
     GoalTask,
     TaskProvenance,
     TaskState,
 )
 from core.goals.store import GoalStore
-
 
 _ALLOWED_TASK_TRANSITIONS: dict[TaskState, set[TaskState]] = {
     TaskState.READY: {
@@ -172,7 +170,10 @@ class GoalManager:
                 task = next((item for item in goal.tasks if item.id == task_id), None)
                 if task is None:
                     continue
-                if state_value is not task.state and state_value not in _ALLOWED_TASK_TRANSITIONS[task.state]:
+                if (
+                    state_value is not task.state
+                    and state_value not in _ALLOWED_TASK_TRANSITIONS[task.state]
+                ):
                     raise ValueError(
                         f"invalid task transition {task.state.value}->{state_value.value}"
                     )
@@ -196,7 +197,10 @@ class GoalManager:
             goal = next((item for item in state.goals if item.id == goal_id), None)
             if goal is None:
                 raise ValueError("unknown goal")
-            if goal.status in {GoalStatus.COMPLETED, GoalStatus.CANCELLED} and status is not goal.status:
+            if (
+                goal.status in {GoalStatus.COMPLETED, GoalStatus.CANCELLED}
+                and status is not goal.status
+            ):
                 raise ValueError("terminal goal cannot be resumed")
             updated = replace(goal, status=status, updated_at=_now())
             goals = tuple(updated if item.id == goal.id else item for item in state.goals)

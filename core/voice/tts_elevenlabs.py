@@ -7,14 +7,26 @@ pipe directly to the audio device.
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
 from collections.abc import AsyncIterator
 
 import httpx
+import websockets
 
 from core.config import get_settings
 from core.logging import get_logger
 
 log = get_logger(__name__)
+
+
+def _sample_rate_from_format(fmt: str) -> int:
+    """'pcm_24000' → 24000, 'mp3_44100_128' → 44100. Default 44100."""
+    for part in fmt.split("_")[1:]:
+        if part.isdigit() and len(part) >= 4:
+            return int(part)
+    return 44100
 
 
 class ElevenLabsTTS:
@@ -33,6 +45,9 @@ class ElevenLabsTTS:
         # eleven_turbo_v2_5 supports full style/speaker-boost and has lower latency
         self.model_id = model_id or s.elevenlabs_model_id
         self.output_format = output_format or s.elevenlabs_output_format
+        # Raw PCM (pcm_*) can pipe straight to the audio device; mp3_* is for the
+        # web/API path. sample_rate lets a local player know the rate.
+        self.sample_rate = _sample_rate_from_format(self.output_format)
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
 
     async def aclose(self) -> None:
@@ -69,7 +84,7 @@ class ElevenLabsTTS:
         }
         headers = {
             "xi-api-key": self.api_key,
-            "accept": "audio/mpeg",
+            "accept": "audio/pcm" if self.output_format.startswith("pcm") else "audio/mpeg",
             "content-type": "application/json",
         }
         payload = {
@@ -110,19 +125,22 @@ class ElevenLabsTTS:
         voice_id: str | None = None,
         model_id: str | None = None,
         output_format: str = "pcm_24000",
-    ):
-        import json
-        import base64
-        import asyncio
-        import websockets
-        
+    ) -> AsyncIterator[bytes]:
+        """Stream audio for a *growing* text stream over ElevenLabs' websocket.
+
+        `stream()` renders one finished string; this one feeds sentences in as the
+        model produces them, so speech starts before the reply is complete.
+        """
         if not self.api_key:
             raise RuntimeError("ELEVENLABS_API_KEY not set")
 
         vid = voice_id or self.voice_id
         mid = model_id or self.model_id
-        url = f"wss://api.elevenlabs.io/v1/text-to-speech/{vid}/stream-input?model_id={mid}&output_format={output_format}"
-        
+        url = (
+            f"wss://api.elevenlabs.io/v1/text-to-speech/{vid}/stream-input"
+            f"?model_id={mid}&output_format={output_format}"
+        )
+
         async with websockets.connect(url) as ws:
             bos_message = {
                 "text": " ",
@@ -136,17 +154,21 @@ class ElevenLabsTTS:
             }
             await ws.send(json.dumps(bos_message))
 
-            async def send_text():
+            async def send_text() -> None:
                 try:
                     async for chunk in text_iterator:
                         if chunk:
-                            await ws.send(json.dumps({"text": chunk, "try_trigger_generation": True}))
+                            await ws.send(
+                                json.dumps({"text": chunk, "try_trigger_generation": True})
+                            )
                     await ws.send(json.dumps({"text": ""}))
                 except Exception as e:
                     log.error("elevenlabs.ws.send.error", exc_info=e)
+                    # Best-effort end-of-stream so the socket closes cleanly; if the
+                    # connection is already gone there is nothing left to say.
                     try:
                         await ws.send(json.dumps({"text": ""}))
-                    except:
+                    except Exception:
                         pass
 
             send_task = asyncio.create_task(send_text())
@@ -166,3 +188,25 @@ class ElevenLabsTTS:
                         break
             finally:
                 send_task.cancel()
+
+    async def list_voices(self) -> list[dict]:
+        """The account's available voices: [{id, name, labels, description, category}].
+        `labels` carries ElevenLabs' tags (gender, age, accent, description, use_case)."""
+        if not self.api_key:
+            raise RuntimeError("ELEVENLABS_API_KEY not set")
+        r = await self._client.get(
+            f"{self.BASE}/voices", headers={"xi-api-key": self.api_key}
+        )
+        r.raise_for_status()
+        out: list[dict] = []
+        for v in r.json().get("voices", []):
+            out.append(
+                {
+                    "id": v.get("voice_id", ""),
+                    "name": v.get("name", ""),
+                    "labels": v.get("labels") or {},
+                    "description": v.get("description") or "",
+                    "category": v.get("category", ""),
+                }
+            )
+        return out

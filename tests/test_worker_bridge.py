@@ -177,7 +177,7 @@ async def test_bash_falls_back_to_local_exec_when_offline(monkeypatch):
         def worker_online(self):
             return False
 
-    async def fake_exec(cmd, cwd, timeout):
+    async def fake_exec(cmd, cwd, timeout):  # noqa: ASYNC109
         return f"local:{cmd}"
 
     monkeypatch.setattr(agent_mod, "get_worker_bridge", lambda: FakeBridge())

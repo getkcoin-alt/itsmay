@@ -20,6 +20,18 @@ from core.voice.tts_elevenlabs import ElevenLabsTTS
 router = APIRouter(prefix="/v1/voice", tags=["voice"])
 
 
+def _empty_transcript() -> dict:
+    """A fresh well-formed empty transcript — what an unusably short or
+    rejected clip returns, so callers never special-case a missing shape."""
+    return {
+        "text": "",
+        "language": "en",
+        "language_probability": 0.0,
+        "duration": 0.0,
+        "segments": [],
+    }
+
+
 class SpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
     voice_id: str | None = None
@@ -71,13 +83,13 @@ async def transcribe(
 ) -> dict:
     data = await audio.read()
     if not data or len(data) < 200:
-        return {"text": "", "language": "en", "language_probability": 0.0, "duration": 0.0, "segments": []}
+        return _empty_transcript()
     suffix = Path(audio.filename or "audio.wav").suffix or ".wav"
     try:
         return await stt.transcribe(data, suffix=suffix, language=language)
     except httpx.HTTPStatusError as e:
         if e.response is not None and e.response.status_code == 400:
-            return {"text": "", "language": "en", "language_probability": 0.0, "duration": 0.0, "segments": []}
+            return _empty_transcript()
         raise HTTPException(500, f"transcription failed: {e}") from e
     except Exception as e:
         raise HTTPException(500, f"transcription failed: {e}") from e
