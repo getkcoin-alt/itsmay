@@ -161,6 +161,7 @@ def test_entity_status_is_false_and_honestly_so(report: Report):
         "no-privilege-escalation",  # frozenset grant from the request
         "selfmod-validated",  # guard consulted before merge
         "selfmod-rollback",  # rollback path exists in the apply script
+        "resource-ceilings",  # a real ceiling refuses a real overage
         "explains-work",  # durable snapshot names current work
         "goal-provenance",  # operator goal vs planner task stays distinct
         "self-stop",  # durable goal pause blocks planner after restart
@@ -181,7 +182,6 @@ def test_these_capabilities_are_proven_and_must_stay_proven(
     [
         ("recovery-strategy", "no recovery layer"),
         ("independent-verify", "no verifier"),
-        ("resource-ceilings", "no resource ledger"),
         ("actions-attributable", "audit covers self-modification only"),
         ("soak-7d", "seven days of operation are not attested"),
     ],

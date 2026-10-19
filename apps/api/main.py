@@ -25,6 +25,7 @@ from apps.api.routers import goals as goals_router
 from apps.api.routers import identity as identity_router
 from apps.api.routers import memory as memory_router
 from apps.api.routers import presence as presence_router
+from apps.api.routers import resources as resources_router
 from apps.api.routers import settings as settings_router
 from apps.api.routers import vault as vault_router
 from apps.api.routers import voice as voice_router
@@ -47,6 +48,7 @@ from core.memory.service import MemoryService
 from core.memory.sqlite_store import SqliteEpisodicStore, SqliteSemanticStore, ensure_schema
 from core.presence.runtime import get_presence_runtime
 from core.presence.sources import watch_worker_presence
+from core.resources import PostgresResourceStore, ResourceLedger, SqliteResourceStore
 from core.util.redis_pool import close_redis
 from core.voice.stt_whisper import WhisperSTT
 from core.voice.tts_elevenlabs import ElevenLabsTTS
@@ -67,12 +69,16 @@ async def lifespan(app: FastAPI):
         app.state.episodic = SqliteEpisodicStore(path)
         app.state.semantic = SqliteSemanticStore(path)
         app.state.goal_store = SqliteGoalStore(path)
+        app.state.resource_store = SqliteResourceStore(path)
     else:
         pool = await get_pool()
         await run_migrations(pool)
         app.state.episodic = EpisodicStore()
         app.state.semantic = SemanticStore()
         app.state.goal_store = PostgresGoalStore(pool)
+        app.state.resource_store = PostgresResourceStore(pool)
+
+    app.state.ledger = ResourceLedger(app.state.resource_store)
 
     app.state.llm = LLMClient()
     app.state.embedder = Embedder()
@@ -243,6 +249,7 @@ def create_app() -> FastAPI:
 
 
     app.include_router(presence_router.router)
+    app.include_router(resources_router.router)
     app.include_router(settings_router.router)
     app.include_router(worker_router.router)
     app.include_router(vault_router.router)

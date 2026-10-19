@@ -17,6 +17,8 @@ Usage:
   scrappy seed                 populate long-term memory (RAG) from knowledge.yaml
   scrappy reindex              rebuild vector indexes for the memory you now have
   scrappy entity [--json]      run the entity acceptance suite (ENTITY_STATUS gate)
+  scrappy usage                show the resource ledger (money, compute, disk, quota)
+  scrappy usage <res> <n>      set a ceiling ('none' removes it) — e.g. usage usd 25
   scrappy vault export         write this Scrappy out as a portable bundle
   scrappy vault import <dir>   load a Scrappy bundle into this host
   scrappy --consolidate        trigger nightly memory consolidation
@@ -478,6 +480,65 @@ def _entity(*, json_out: bool = False) -> None:
     if not status:
         print(f"  {_DIM}Every criterion must pass. Each FAIL above is the spec "
               f"for the next build.{_RESET}")
+    print()
+
+
+async def _usage(args: list[str]) -> None:
+    """Show the resource ledger, or set one ceiling.
+
+        scrappy usage                 → the bill
+        scrappy usage usd 25          → cap external API spend at $25/month
+        scrappy usage calls none      → remove the ceiling on calls
+    """
+    headers: dict[str, str] = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            if len(args) >= 2:
+                resource, raw = args[0], args[1]
+                limit = None if raw.lower() in {"none", "off", "null"} else float(raw)
+                r = await client.put(
+                    f"{API_BASE}/v1/resources/{resource}/ceiling",
+                    json={"limit": limit},
+                    headers=headers,
+                )
+                if r.status_code == 422:
+                    print(f"\n{_RED}{r.json().get('detail', r.text)}{_RESET}\n")
+                    return
+                r.raise_for_status()
+                row = r.json()
+                cap = "uncapped" if row["ceiling"] is None else f"{row['ceiling']:g}"
+                print(f"\n{_GREEN}{row['resource']} ceiling → {cap}{_RESET}\n")
+                return
+
+            r = await client.get(f"{API_BASE}/v1/resources", headers=headers)
+            r.raise_for_status()
+            body = r.json()
+    except httpx.ConnectError:
+        print(f"{_RED}Cannot connect to {API_BASE} — is the server running?{_RESET}")
+        return
+    except ValueError:
+        print(f"{_RED}Ceiling must be a number, or 'none' to remove it.{_RESET}")
+        return
+
+    rows = body.get("usage") or []
+    print(f"\n{_BOLD}Resource ledger{_RESET}  {_DIM}· account {body['account']}{_RESET}")
+    if not rows:
+        print(f"{_DIM}  Nothing metered yet.{_RESET}\n")
+        return
+    print(f"{_DIM}{'─' * 58}{_RESET}")
+    for row in rows:
+        used, ceiling = row["used"], row["ceiling"]
+        if ceiling is None:
+            detail = f"{_DIM}uncapped{_RESET}"
+        else:
+            # Colour by headroom: the point of a ceiling is seeing it coming.
+            share = used / ceiling if ceiling else 1.0
+            colour = _RED if share >= 1.0 else _YELLOW if share >= 0.8 else _GREEN
+            detail = f"of {ceiling:g}  {colour}{share * 100:.0f}%{_RESET}"
+        print(f"  {row['resource']:<10} {_DIM}{row['period']:<8}{_RESET} {used:>12g}  {detail}")
     print()
 
 
@@ -1485,6 +1546,10 @@ def main() -> None:
 
     if args and args[0] == "entity":
         _entity(json_out="--json" in args)
+        return
+
+    if args and args[0] == "usage":
+        asyncio.run(_usage(args[1:]))
         return
 
     if args and args[0] == "vault":

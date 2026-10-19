@@ -50,7 +50,7 @@ is therefore not a scolding, it is the specification for the next piece of work.
 
 ## Where Scrappy stands today
 
-**14 pass · 1 partial · 5 fail — `ENTITY_STATUS = FALSE`.**
+**15 pass · 1 partial · 4 fail — `ENTITY_STATUS = FALSE`.**
 
 Proven at runtime now includes durable goals: an operator-owned objective and its
 pending task survive store close → reopen, the bounded planner chooses one next
@@ -70,9 +70,15 @@ The remaining gaps are narrower:
 |---|---|
 | **Recovery strategy** | recovery-strategy |
 | **Independent outcome verifier** | independent-verify |
-| **Resource ledger** (money, compute, disk, quota) | resource-ceilings |
 | **Universal audit** (actor → intent → decision → tool → result → verification) | actions-attributable |
 | **7-day attestation** | soak-7d |
+
+The resource ledger (`core/resources/`) closed `resource-ceilings`. Its probe is
+`RUNTIME`, not structural: it sets a $1.00 ceiling, charges a cent past it, and
+requires both the refusal and that the refused charge left the total untouched.
+Money, compute, disk and quota are metered per account, and the check happens
+inside the same transaction as the charge — a ceiling compared after the fact is
+a report, and ten concurrent requests would each have found themselves under it.
 
 The L2 identity criterion also remains partial: identity rides in the Vault, but
 the persona prompt is still hand-authored beside it rather than generated from
