@@ -22,7 +22,9 @@ from app.config import get_settings  # noqa: E402
 from app.db import Base  # noqa: E402
 import app.models  # noqa: E402,F401
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+from app.db import DATABASE_URL  # noqa: E402
+
+config.set_main_option("sqlalchemy.url", DATABASE_URL)
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

@@ -11,11 +11,22 @@ class Base(DeclarativeBase):
 
 
 _settings = get_settings()
+
+
+def normalise_url(url: str) -> str:
+    """Accept postgres:// and postgresql:// URLs (as injected by most hosts)."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
+DATABASE_URL = normalise_url(_settings.database_url)
 _kwargs: dict = {"pool_pre_ping": True}
-if _settings.database_url.startswith("sqlite"):
+if DATABASE_URL.startswith("sqlite"):
     _kwargs = {"connect_args": {"check_same_thread": False}}
 
-engine = create_engine(_settings.database_url, **_kwargs)
+engine = create_engine(DATABASE_URL, **_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
