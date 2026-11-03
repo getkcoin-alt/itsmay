@@ -73,6 +73,23 @@ class Assessment:
     rejection: str | None = None
 
 
+def inr_fmt(value: Decimal | float, decimals: int = 2) -> str:
+    """Indian digit grouping: 12,34,567.89"""
+    v = float(value)
+    sign = "-" if v < 0 else ""
+    whole, _, frac = f"{abs(v):.{decimals}f}".partition(".")
+    if len(whole) > 3:
+        head, tail = whole[:-3], whole[-3:]
+        groups = []
+        while len(head) > 2:
+            groups.insert(0, head[-2:])
+            head = head[:-2]
+        if head:
+            groups.insert(0, head)
+        whole = ",".join(groups + [tail])
+    return f"{sign}{whole}" + (f".{frac}" if decimals else "")
+
+
 def ref(prefix: str) -> str:
     return f"{prefix}-{secrets.token_hex(4).upper()}"
 
@@ -252,7 +269,7 @@ def assess(
     if a.rejection is None and inst.asset_class == "forex" and trading.get("forex_inr_pairs_only") and inst.currency != "INR":
         a.rejection = "Only INR currency pairs are permitted under the current jurisdiction setting"
     if a.rejection is None and notional > dec(str(trading.get("max_order_value_inr", 5_000_000))):
-        a.rejection = f"Order value exceeds the per-order limit of ₹{int(trading['max_order_value_inr']):,}"
+        a.rejection = f"Order value exceeds the per-order limit of ₹{inr_fmt(trading['max_order_value_inr'], 0)}"
     if a.rejection is None and inst.asset_class in ("stock", "crypto") and side == "SELL":
         held = cur_qty - pending_sell_qty(db, user.id, inst.symbol, exclude_order)
         if qty > held:
@@ -265,7 +282,7 @@ def assess(
             a.rejection = "Option writing is disabled by the administrator"
     if a.rejection is None and available_after < 0:
         need = money(-available_after)
-        a.rejection = f"Insufficient funds: additional ₹{need:,.2f} required (available ₹{available_before:,.2f})"
+        a.rejection = f"Insufficient funds: additional ₹{inr_fmt(need)} required (available ₹{inr_fmt(available_before)})"
 
     a.warnings = _warnings(db, user, a, t, cash)
     return a
@@ -287,7 +304,7 @@ def _warnings(db: Session, user: User, a: Assessment, t: float, cash: Decimal) -
         w.append({
             "level": "danger",
             "code": "LARGE_LOSS",
-            "message": f"Selling a put option can lose up to ₹{max_loss:,.0f} (strike × quantity, less premium) "
+            "message": f"Selling a put option can lose up to ₹{inr_fmt(max_loss, 0)} (strike × quantity, less premium) "
             "if the underlying falls to zero. Losses can far exceed the premium received.",
         })
     if inst.asset_class == "option" and a.side == "BUY" and a.new_qty > 0:

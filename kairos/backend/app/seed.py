@@ -194,7 +194,9 @@ def seed_demo_portfolio(db: Session, user: User) -> None:
     db.commit()
 
 
-def seed_fresh_account(db: Session, user: User, amount: Decimal = Decimal("1000000")) -> None:
+def seed_fresh_account(db: Session, user: User, amount: Decimal | None = None) -> None:
+    if amount is None:
+        amount = Decimal(str(get_settings_doc(db)["wallet"]["initial_demo_balance"]))
     acct = lock_account(db, user.id)
     post_ledger(db, acct, "DEPOSIT", amount, "Initial demo balance credited", datetime.now(UTC),
                 method="Simulated bank transfer", reference="DEP-INITIAL")
