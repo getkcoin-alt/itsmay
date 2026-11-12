@@ -31,6 +31,9 @@ export function OrderTicket({ inst, defaultSide = "BUY", compact = false, onPlac
   const [amount, setAmount] = useState<string>(usesLots(inst.asset_class) ? "1" : inst.asset_class === "crypto" ? String(inst.min_qty * 10) : "1");
   const [limit, setLimit] = useState<string>("");
   const [preview, setPreview] = useState<Preview | null>(null);
+  // The exact request the current preview was computed for. Review is only allowed
+  // when it matches the current inputs, so the dialog never shows a stale order.
+  const [previewFor, setPreviewFor] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [result, setResult] = useState<Order | null>(null);
@@ -63,6 +66,7 @@ export function OrderTicket({ inst, defaultSide = "BUY", compact = false, onPlac
       ...(type === "LIMIT" ? { limit_price: limit } : {}),
     };
   }, [amount, inst.symbol, side, type, limit, lots]);
+  const bodyKey = body ? JSON.stringify(body) : null;
 
   // Live server-side preview (debounced). Re-runs as the simulated price moves.
   useEffect(() => {
@@ -77,6 +81,7 @@ export function OrderTicket({ inst, defaultSide = "BUY", compact = false, onPlac
         const p = await api<Preview>("/api/orders/preview", { method: "POST", json: body });
         if (my === seq.current) {
           setPreview(p);
+          setPreviewFor(JSON.stringify(body));
           setPreviewError(null);
         }
       } catch (e) {
@@ -89,10 +94,11 @@ export function OrderTicket({ inst, defaultSide = "BUY", compact = false, onPlac
     return () => clearTimeout(t);
   }, [body, amount, Math.round(inst.ltp * 100)]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const fresh = !!preview && previewFor !== null && previewFor === bodyKey;
   const dangers = preview?.warnings.filter((w) => w.level === "danger") ?? [];
 
   const submit = async () => {
-    if (!body) return;
+    if (!body || !fresh) return; // never submit something other than what was reviewed
     setSubmitting(true);
     try {
       const r = await api<{ order: Order }>("/api/orders", { method: "POST", json: { ...body, client_order_id: uid() } });
@@ -192,10 +198,10 @@ export function OrderTicket({ inst, defaultSide = "BUY", compact = false, onPlac
         variant={side === "BUY" ? "buy" : "sell"}
         size="lg"
         className="mt-4 w-full"
-        disabled={disabled || !preview || !preview.can_execute}
+        disabled={disabled || !fresh || !preview?.can_execute}
         onClick={() => setReviewOpen(true)}
       >
-        {disabled ? "Trading disabled" : `Review ${side === "BUY" ? "buy" : "sell"} order`}
+        {disabled ? "Trading disabled" : body && !fresh && !previewError ? "Updating preview…" : `Review ${side === "BUY" ? "buy" : "sell"} order`}
       </Button>
       <p className="mt-2 text-center text-[11px] text-fg-faint">Simulated execution against demo prices. No real order is sent to any exchange.</p>
 
@@ -210,7 +216,7 @@ export function OrderTicket({ inst, defaultSide = "BUY", compact = false, onPlac
             <Button variant="ghost" className="flex-1" onClick={() => setReviewOpen(false)}>
               Edit
             </Button>
-            <Button variant={side === "BUY" ? "buy" : "sell"} className="flex-[2]" loading={submitting} disabled={dangers.length > 0 && !ack} onClick={submit}>
+            <Button variant={side === "BUY" ? "buy" : "sell"} className="flex-[2]" loading={submitting} disabled={!fresh || (dangers.length > 0 && !ack)} onClick={submit}>
               Confirm {side === "BUY" ? "buy" : "sell"}
             </Button>
           </div>

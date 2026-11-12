@@ -14,6 +14,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "Admin@123456";
 fs.mkdirSync(OUT, { recursive: true });
 
 const problems = [];
+let currentPage = null;
 const results = [];
 
 function watch(page, label) {
@@ -34,6 +35,7 @@ async function step(name, fn) {
     console.log(`✓ ${name} (${Date.now() - t}ms)`);
   } catch (e) {
     results.push({ name, ok: false, error: e.message });
+    if (currentPage) await currentPage.screenshot({ path: path.join(OUT, `FAILED-${name.slice(0, 2)}.png`) }).catch(() => {});
     console.log(`✗ ${name}: ${e.message.split("\n")[0]}`);
   }
 }
@@ -67,6 +69,7 @@ async function placeFromTicket(page, { side, amount, ack = false }) {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: Number(process.env.DSF || 1) });
   const page = await ctx.newPage();
+  currentPage = page;
   watch(page, "desktop");
 
   await step("01 landing page renders", async () => {
@@ -122,10 +125,15 @@ async function placeFromTicket(page, { side, amount, ack = false }) {
   });
 
   await step("08 sell (write) an option with risk acknowledgement", async () => {
-    const cell = page.getByRole("button", { name: /^Select NIFTY-.*-PE$/ }).nth(6);
-    await cell.scrollIntoViewIfNeeded();
-    await cell.hover();
-    await cell.locator("xpath=ancestor::td[1]").getByRole("button", { name: /^Sell NIFTY-/ }).click();
+    const cell = page.getByRole("button", { name: /^Select NIFTY-.*-PE$/ }).nth(10);
+    await cell.evaluate((el) => el.scrollIntoView({ block: "center" })); // keep it clear of the sticky headers
+    await page.waitForTimeout(200);
+    const bb = await cell.boundingBox();
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2); // the chain re-renders live; hover like a user
+    const sBtn = cell.locator("xpath=ancestor::td[1]").getByRole("button", { name: /^Sell NIFTY-/ });
+    await sBtn.waitFor();
+    const sb = await sBtn.boundingBox();
+    await page.mouse.click(sb.x + sb.width / 2, sb.y + sb.height / 2);
     await page.getByText(/Short 1 lot/).waitFor();
     await placeFromTicket(page, { side: "Sell", amount: 1, ack: true });
     await shot(page, "08-option-sold");
@@ -198,18 +206,18 @@ async function placeFromTicket(page, { side, amount, ack = false }) {
   await step("14e normal user is blocked from admin", async () => {
     await page.goto(BASE + "/admin");
     await page.getByText("Administrator access required").waitFor();
-    const r = await page.request.get(BASE + "/api/admin/stats");
-    if (r.status() !== 403) throw new Error(`expected 403, got ${r.status()}`);
+    const status = await page.evaluate(() => fetch("/api/admin/stats").then((r) => r.status));
+    if (status !== 403) throw new Error(`expected 403, got ${status}`);
   });
 
   await step("15 admin dashboard", async () => {
-    await page.request.post(BASE + "/api/auth/logout", { headers: { "x-kairos-client": "web" } });
+    await page.evaluate(() => fetch("/api/auth/logout", { method: "POST", headers: { "x-kairos-client": "web" } }));
     await page.goto(BASE + "/login");
     await page.getByLabel("Email").fill(ADMIN_EMAIL);
     await page.getByLabel("Password", { exact: true }).fill(ADMIN_PASSWORD);
     await page.getByRole("button", { name: /^Sign in$/ }).click();
     await page.waitForURL("**/admin");
-    await page.getByText("Registered users").waitFor();
+    await page.getByText("Registered users").first().waitFor();
     await page.waitForTimeout(1000);
     await shot(page, "15-admin");
     for (const p of ["users", "kyc", "assets", "orders", "transactions", "reports", "settings"]) {
