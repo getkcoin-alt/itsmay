@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #06080c;
+  color: #e7ecf3;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-feature-settings: "cv11", "ss01";
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+::selection {
+  background: #8c9bff44;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #273043 transparent;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+.bg-grid {
+  background-image: linear-gradient(to right, rgba(140, 155, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(140, 155, 255, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}

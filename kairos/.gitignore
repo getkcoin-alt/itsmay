@@ -11,3 +11,7 @@ out/
 *.log
 frontend/test-results/
 frontend/playwright-report/
+
+# The repository root ignores src/; the web app source lives there.
+!frontend/src/
+*.tsbuildinfo
