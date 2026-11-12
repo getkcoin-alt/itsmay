@@ -1,5 +1,7 @@
 # Kairos Markets: Simulated Multi-Asset Trading Platform (Client Demo)
 
+**Live demo: https://kairos-markets-lake.vercel.app** (deployed on Vercel; see [Deployment](docs/DEPLOYMENT.md)).
+
 Kairos is an interactive demonstration of a unified trading and investment platform covering **stocks, options (CE/PE), crypto, forex and a consolidated portfolio**, plus an RBAC-protected **back office**.
 
 > **Everything is simulated.** Prices come from a deterministic model, not a market feed. There is no connection to any exchange, broker, bank, payment rail, crypto custody or forex execution venue. The app makes no claim of regulatory approval or partnership. Binary options are not offered anywhere.
@@ -79,7 +81,7 @@ Automated version: `node frontend/e2e/demo-walkthrough.cjs` (needs both servers 
 
 ## Remaining limitations
 
-- **Not deployed yet**: no suitable existing hosting target was available (see [Deployment](docs/DEPLOYMENT.md) for exact steps).
+- **Vercel hosting**: rate limits are per function instance, there is no WebSocket (the UI polls), and resting limit orders fill when their owner next uses the app rather than by a background matcher.
 - **Simulated data only**: prices come from a seeded fractal-noise model in a simulated 24×7 session. There are no market hours, holidays or circuit limits. Stock "fundamentals" are illustrative.
 - **Execution model**: fills at the simulated last price (no order-book depth, partial fills, slippage or bid/ask crossing). Limit orders fill when the matcher observes the price at or through the limit (every 3 s, and on page requests).
 - **Margin model**: simplified SPAN-style formula for short options, notional/leverage for forex. There are no automated margin calls or liquidations; risk is shown as utilisation and warnings.

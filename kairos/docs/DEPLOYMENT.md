@@ -1,15 +1,30 @@
 # Deployment
 
-## Status
+## Status: live on Vercel
 
-**Not deployed.** The build session found no suitable existing target:
+| Component | Where |
+|---|---|
+| Web app (Next.js) | https://kairos-markets-lake.vercel.app (Vercel project `kairos-markets`, root `kairos/frontend`) |
+| API (FastAPI, Python functions) | https://kairos-markets-api.vercel.app (Vercel project `kairos-markets-api`, root `kairos/backend`) |
+| Database | Supabase Postgres `kairos-markets-demo` (ap-south-1), private schema `kairos`, owned by role `kairos_app`, reached through the transaction pooler |
 
-- The connected Vercel team has no project for this app.
-- The only Supabase project belongs to a different application and is inactive.
-- Railway (used by other services in this repository) needs authorisation that wasn't available.
-- Docker images could not be built in the build sandbox (no Docker daemon). The runtime paths the images use were verified directly: Next.js standalone server, fresh-database `alembic upgrade` → seed → serve.
+Both Vercel projects are connected to `getkcoin-alt/itsmay`. The web app proxies `/api/*` to the API (`KAIROS_API_ORIGIN`).
 
-No new billable cloud resources were created without approval. Pick one of the options below.
+Serverless specifics:
+
+- `KAIROS_DB_SERVERLESS=true`: NullPool, no prepared statements (Supavisor).
+- `KAIROS_DB_SCHEMA=kairos`: tables are kept out of Supabase's auto-generated public REST API.
+- `KAIROS_BACKGROUND_MATCHER=false`: limit orders and expiries are processed on each user's requests.
+- Rate limiting is in-memory per function instance (no Redis).
+- The WebSocket stream isn't available on Vercel, so the UI polls instead.
+
+Seeding or resetting the demo data (no shell on Vercel) uses a token-gated endpoint:
+
+```bash
+curl -X POST -H "x-kairos-client: ops" -H "x-seed-token: $KAIROS_SEED_TOKEN" "https://kairos-markets-api.vercel.app/api/internal/seed?reset=1"
+```
+
+The token, admin password and database password are stored only as *sensitive* Vercel environment variables. Unset `KAIROS_SEED_TOKEN` to disable the endpoint.
 
 ## Environment variables
 
