@@ -1,0 +1,37 @@
+# Local / single-host deployment of the Scriza Trade simulated trading demo.
+#   cp .env.example .env   # set SCRIZA_ADMIN_PASSWORD at minimum
+#   docker compose up -d --build   →  http://localhost:3000
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: scriza
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scriza}
+      POSTGRES_DB: scriza
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scriza"]
+      interval: 5s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+  api:
+    build: ./backend
+    environment:
+      SCRIZA_ENV: production
+      SCRIZA_DATABASE_URL: postgresql+psycopg://scriza:${POSTGRES_PASSWORD:-scriza}@db:5432/scriza
+      SCRIZA_REDIS_URL: redis://redis:6379/0
+      SCRIZA_ADMIN_PASSWORD: ${SCRIZA_ADMIN_PASSWORD:?set SCRIZA_ADMIN_PASSWORD in .env}
+      SCRIZA_COOKIE_SECURE: ${SCRIZA_COOKIE_SECURE:-false}
+      SCRIZA_EXPOSE_RESET_LINKS: ${SCRIZA_EXPOSE_RESET_LINKS:-false}
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+  web:
+    build:
+      context: ./frontend
+      args: { SCRIZA_API_ORIGIN: http://api:8000 }
+    ports: ["3000:3000"]
+    depends_on: [api]
+volumes:
+  pgdata:
