@@ -90,6 +90,20 @@ app.include_router(trading.router)
 app.include_router(admin.router)
 
 
+@app.post("/api/internal/seed", include_in_schema=False)
+def remote_seed(request: Request):
+    """One-time seeding for hosts without shell access. Disabled unless KAIROS_SEED_TOKEN is set."""
+    import hmac
+
+    from . import seed
+
+    token = request.headers.get("x-seed-token", "")
+    if not settings.seed_token or not hmac.compare_digest(token, settings.seed_token):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    seed.run(reset=request.query_params.get("reset") == "1")
+    return {"ok": True}
+
+
 @app.get("/api/health")
 def health():
     db = SessionLocal()

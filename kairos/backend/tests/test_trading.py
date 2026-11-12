@@ -62,7 +62,7 @@ def test_average_price_and_realized_pnl(db, user_client):
 
 def test_insufficient_funds_rejected_without_state_change(user_client, db):
     before = _summary(user_client)
-    r = user_client.post("/api/orders", json={"symbol": "MARUTI", "side": "BUY", "quantity": 300})
+    r = user_client.post("/api/orders", json={"symbol": "MARUTI", "side": "BUY", "quantity": 150})
     o = r.json()["order"]
     assert o["status"] == "REJECTED" and "Insufficient funds" in o["reject_reason"]
     assert _summary(user_client)["cash_balance"] == before["cash_balance"]

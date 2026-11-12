@@ -2,6 +2,7 @@ from collections.abc import Iterator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from .config import get_settings
 
@@ -25,8 +26,13 @@ DATABASE_URL = normalise_url(_settings.database_url)
 _kwargs: dict = {"pool_pre_ping": True}
 if DATABASE_URL.startswith("sqlite"):
     _kwargs = {"connect_args": {"check_same_thread": False}}
+elif _settings.db_serverless:
+    # Transaction-mode poolers (Supavisor/PgBouncer) cannot keep prepared statements.
+    _kwargs = {"poolclass": NullPool, "connect_args": {"prepare_threshold": None}}
 
 engine = create_engine(DATABASE_URL, **_kwargs)
+if _settings.db_schema:
+    engine = engine.execution_options(schema_translate_map={None: _settings.db_schema})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

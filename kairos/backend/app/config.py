@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     background_matcher: bool = True
     matcher_interval_seconds: float = 3.0
 
+    # Serverless / connection-pooler deployments (e.g. Vercel + Supabase pooler):
+    # no client-side pool and no server-side prepared statements.
+    db_serverless: bool = False
+    # Postgres schema holding the tables (None = connection default).
+    db_schema: str | None = None
+    # One-time remote seeding for hosts without shell access. Empty = disabled.
+    seed_token: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.env == "production"
